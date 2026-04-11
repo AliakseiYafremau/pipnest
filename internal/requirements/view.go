@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	packagemanager "pipnest/internal/requirements/package_manager"
 	"regexp"
@@ -61,6 +62,7 @@ type ViewModel struct {
 	ActionModalTitle   string
 	ActionModalText    string
 	ActionModalKind    logKind
+	HelpModalOpen      bool
 
 	LogText string
 	LogKind logKind
@@ -103,10 +105,17 @@ func NewViewModel() ViewModel {
 	installInput := textinput.New()
 	installInput.Placeholder = "Type package name..."
 
+	pm := packagemanager.PackageManager(packagemanager.NewPipManager("pip"))
+	logText := "Loading installed packages... (pip)"
+	if _, err := exec.LookPath("uv"); err == nil {
+		pm = packagemanager.NewUVManager("uv")
+		logText = "Loading installed packages... (uv)"
+	}
+
 	return ViewModel{
-		PackageManager: packagemanager.NewUVManager("uv"),
+		PackageManager: pm,
 		InstallInput:   installInput,
-		LogText:        "Loading installed packages...",
+		LogText:        logText,
 		LogKind:        logLoading,
 	}
 }
@@ -130,9 +139,12 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		if m.ActionModalOpen {
 			return m.updateActionModal(msg)
 		}
+		if m.HelpModalOpen {
+			return m.updateHelpModal(msg)
+		}
 		return m.updateMainWindow(msg)
 	case tea.MouseMsg:
-		if m.ModalOpen || m.ActionModalOpen {
+		if m.ModalOpen || m.ActionModalOpen || m.HelpModalOpen {
 			return m, nil
 		}
 		return m.updateMainMouse(msg)
@@ -164,10 +176,12 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	case uninstallDoneMsg:
 		m.BusyAction = false
 		if msg.Err != nil {
+			m.showActionModalResult(logError, "Uninstall failed", msg.Err.Error())
 			m.setLog(logError, "Uninstall failed: "+msg.Err.Error())
 			return m, nil
 		}
 
+		m.showActionModalResult(logSuccess, "Uninstall completed", "Removed: "+msg.Name)
 		m.setLog(logSuccess, fmt.Sprintf("Uninstalled %s", msg.Name))
 		m.LoadingList = true
 		return m, m.loadInstalledCmd()
@@ -291,6 +305,9 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.openModal()
 			m.setLog(logInfo, "Install mode opened")
 			return m, nil
+		case '?':
+			m.openHelpModal()
+			return m, nil
 		case 'd', 'D':
 			if m.BusyAction || m.LoadingList {
 				return m, nil
@@ -306,6 +323,7 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			}
 
 			m.BusyAction = true
+			m.showActionModalLoading("Uninstall package", fmt.Sprintf("Uninstalling %s...", name))
 			m.setLog(logLoading, fmt.Sprintf("Uninstalling %s...", name))
 			return m, m.uninstallCmd(name)
 		case 'l', 'L':
@@ -486,6 +504,24 @@ func (m ViewModel) updateActionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	return m, nil
 }
 
+func (m ViewModel) updateHelpModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyEnter:
+		m.closeHelpModal()
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case '?', 'q', 'Q':
+				m.closeHelpModal()
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
+}
+
 func (m ViewModel) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return ""
@@ -533,13 +569,15 @@ func (m ViewModel) View() string {
 
 	baseMain := mainPanes
 	helpLine := m.renderBottomHelp()
-	if !m.ModalOpen && !m.ActionModalOpen {
+	if !m.ModalOpen && !m.ActionModalOpen && !m.HelpModalOpen {
 		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
 	modal := ""
 	if m.ModalOpen {
 		modal = m.renderInstallModal()
+	} else if m.HelpModalOpen {
+		modal = m.renderHelpModal()
 	} else {
 		modal = m.renderActionModal()
 	}
@@ -647,6 +685,14 @@ func (m *ViewModel) closeActionModal() {
 	m.ActionModalTitle = ""
 	m.ActionModalText = ""
 	m.ActionModalKind = logInfo
+}
+
+func (m *ViewModel) openHelpModal() {
+	m.HelpModalOpen = true
+}
+
+func (m *ViewModel) closeHelpModal() {
+	m.HelpModalOpen = false
 }
 
 func (m *ViewModel) setLog(kind logKind, text string) {
@@ -1070,6 +1116,46 @@ func (m ViewModel) renderActionModal() string {
 	return modalStyle.Render(strings.Join(lines, "\n"))
 }
 
+func (m ViewModel) renderHelpModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Keybinds")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	key := lipgloss.NewStyle().Bold(true).Foreground(reqKeyColor)
+	detail := lipgloss.NewStyle().Foreground(reqValueColor)
+
+	rows := []string{
+		title,
+		muted.Render("Core"),
+		key.Render("i") + detail.Render("  install package"),
+		key.Render("d") + detail.Render("  uninstall selected package"),
+		key.Render("j/k or ↑/↓") + detail.Render("  move in package list"),
+		key.Render("PgUp/PgDown") + detail.Render("  jump in package list"),
+		key.Render("Esc") + detail.Render("  return to menu"),
+		key.Render("q") + detail.Render("  quit app"),
+		"",
+		muted.Render("Secondary"),
+		key.Render("f") + detail.Render("  freeze into requirements.txt"),
+		key.Render("r") + detail.Render("  install from nearest requirements.txt"),
+		key.Render("l") + detail.Render("  refresh installed packages"),
+		"",
+		muted.Render("Close help: Esc, Enter, ?, or q"),
+	}
+
+	modalWidth := min(max(56, m.Width-12), 90)
+	if modalWidth < 56 {
+		modalWidth = 56
+	}
+
+	modalHeight := min(max(10, len(rows)+2), max(10, m.Height-2))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Padding(1, 2).
+		Width(modalWidth).
+		Height(modalHeight).
+		Render(strings.Join(rows, "\n"))
+}
+
 func (m ViewModel) renderLogLine() string {
 	style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Width(m.Width - 2).Height(1)
 	text := m.LogText
@@ -1097,20 +1183,62 @@ func (m ViewModel) renderLogLine() string {
 }
 
 func (m ViewModel) renderBottomHelp() string {
-	help := "ESC back | Up/Down select | D uninstall | I install pkg | F freeze | R install requirements | L refresh"
-	style := lipgloss.NewStyle().Foreground(reqKeyColor).Bold(true)
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(reqKeyColor)
+	sepStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+
 	if m.ModalOpen {
-		help = "ESC close modal | Up/Down select suggestion | Enter install"
-		style = lipgloss.NewStyle().Foreground(reqVenvColor).Bold(true)
-	}
-	if m.ActionModalOpen {
-		if m.ActionModalLoading {
-			help = "Action running..."
-		} else {
-			help = "ESC or Enter close"
-		}
-		style = lipgloss.NewStyle().Foreground(reqGlobalColor).Bold(true)
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Enter"), sepStyle.Render(": install"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("q"), sepStyle.Render(": quit"),
+		)
+		return TruncateText(legend, m.Width)
 	}
 
-	return style.Render(TruncateText(help, m.Width))
+	if m.ActionModalOpen {
+		state := "result"
+		if m.ActionModalLoading {
+			state = "running"
+		}
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Action"), sepStyle.Render(": "+state),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Enter"), sepStyle.Render(": close"),
+		)
+		return TruncateText(legend, m.Width)
+	}
+
+	if m.HelpModalOpen {
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Enter"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("?"), sepStyle.Render(": close"),
+		)
+		return TruncateText(legend, m.Width)
+	}
+
+	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
+		keyStyle.Render("i"), sepStyle.Render(": install"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("d"), sepStyle.Render(": uninstall"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("?"), sepStyle.Render(": more"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("q"), sepStyle.Render(": quit"),
+	)
+	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Foreground(reqGlobalColor).Render("global"),
+		lipgloss.NewStyle().Render(" / "),
+		lipgloss.NewStyle().Foreground(reqVenvColor).Render("venv"),
+	)
+	spacer := lipgloss.NewStyle().Width(max(0, m.Width-lipgloss.Width(leftLegend)-lipgloss.Width(rightLegend))).Render("")
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer, rightLegend)
 }

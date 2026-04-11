@@ -14,6 +14,7 @@ import (
 type UVManager struct {
 	Binary     string
 	PythonPath string
+	fallback   PackageManager
 }
 
 func NewUVManager(binary string) *UVManager {
@@ -22,6 +23,9 @@ func NewUVManager(binary string) *UVManager {
 	}
 
 	m := &UVManager{Binary: binary}
+	if _, err := exec.LookPath(binary); err != nil {
+		m.fallback = NewPipManager("pip")
+	}
 	if env, err := GetCurrentEnvironment(); err == nil {
 		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
 	}
@@ -31,6 +35,10 @@ func NewUVManager(binary string) *UVManager {
 
 // Install package into selected environment.
 func (m *UVManager) Install(ctx context.Context, pkgName string) error {
+	if m.fallback != nil {
+		return m.fallback.Install(ctx, pkgName)
+	}
+
 	m.refreshEnvironment()
 
 	pkgName = strings.TrimSpace(pkgName)
@@ -49,6 +57,10 @@ func (m *UVManager) Install(ctx context.Context, pkgName string) error {
 
 // Install package set from requirements file into selected environment.
 func (m *UVManager) InstallFromFile(ctx context.Context, filePath string) error {
+	if m.fallback != nil {
+		return m.fallback.InstallFromFile(ctx, filePath)
+	}
+
 	m.refreshEnvironment()
 
 	filePath = strings.TrimSpace(filePath)
@@ -67,6 +79,10 @@ func (m *UVManager) InstallFromFile(ctx context.Context, filePath string) error 
 
 // Freeze selected environment requirements into a file.
 func (m *UVManager) Freeze(ctx context.Context, filePath string) error {
+	if m.fallback != nil {
+		return m.fallback.Freeze(ctx, filePath)
+	}
+
 	m.refreshEnvironment()
 
 	filePath = strings.TrimSpace(filePath)
@@ -88,6 +104,10 @@ func (m *UVManager) Freeze(ctx context.Context, filePath string) error {
 
 // List installed packages in selected environment.
 func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
+	if m.fallback != nil {
+		return m.fallback.List(ctx)
+	}
+
 	m.refreshEnvironment()
 
 	out, err := m.runPip(ctx, "list", "--format", "json")
@@ -113,6 +133,10 @@ func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
 }
 
 func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, error) {
+	if m.fallback != nil {
+		return m.fallback.Search(ctx, query)
+	}
+
 	m.refreshEnvironment()
 
 	return SearchPackages(ctx, query)
@@ -120,6 +144,10 @@ func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, err
 
 // Remove package from selected environment.
 func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
+	if m.fallback != nil {
+		return m.fallback.Remove(ctx, pkgName)
+	}
+
 	m.refreshEnvironment()
 
 	pkgName = strings.TrimSpace(pkgName)
@@ -127,12 +155,16 @@ func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.runPip(ctx, "uninstall", "-y", pkgName)
+	_, err := m.runPip(ctx, "uninstall", pkgName)
 	return err
 }
 
 // uv run python -c "<code>"
 func (m *UVManager) RunPython(ctx context.Context, code string) (string, error) {
+	if m.fallback != nil {
+		return m.fallback.RunPython(ctx, code)
+	}
+
 	m.refreshEnvironment()
 
 	if strings.TrimSpace(code) == "" {

@@ -170,6 +170,8 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
+		case tea.KeyEsc:
+			return m, tea.Quit
 		case tea.KeyUp:
 			if m.menuCursor > 0 {
 				m.menuCursor--
@@ -367,8 +369,17 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateRequirements: Lógica para pantalla de requirements
 func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyRunes {
+		if !m.requirements.ModalOpen && !m.requirements.ActionModalOpen && !m.requirements.HelpModalOpen {
+			runeKey := strings.ToLower(keyMsg.String())
+			if runeKey == "q" {
+				return m, tea.Quit
+			}
+		}
+	}
+
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEsc {
-		if m.requirements.ModalOpen {
+		if m.requirements.ModalOpen || m.requirements.ActionModalOpen || m.requirements.HelpModalOpen {
 			var cmd tea.Cmd
 			m.requirements, cmd = m.requirements.Update(msg)
 			return m, cmd
