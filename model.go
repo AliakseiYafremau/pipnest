@@ -1,6 +1,7 @@
 package main
 
 import (
+	"pipnest/internal/requirements"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -8,12 +9,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"pipnest/internal/cheatsheet"
-	"pipnest/internal/pkgsearch"
 )
 
-type searchResult = pkgsearch.Result
+type searchResult = requirements.Result
 
-type searchDoneMsg = pkgsearch.DoneMsg
+type searchDoneMsg = requirements.DoneMsg
 
 type model struct {
 	// Navigation
@@ -160,7 +160,7 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.query = query
 			m.loading = true
 			m.err = nil
-			return m, pkgsearch.Search(query)
+			return m, requirements.Search(query)
 		}
 	case tea.MouseMsg:
 		if msg.Type == tea.MouseLeft && len(m.results) > 0 {
