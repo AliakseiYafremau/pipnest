@@ -261,103 +261,18 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateRequirements: Lógica para pantalla de requirements
 func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.Type == tea.KeyEsc {
-			m.currentScreen = ScreenMainMenu
-			m.reqErr = nil
-			m.reqLoading = false
-			m.installedPackages = nil
-			m.selectedReqIdx = 0
-			m.reqInput.Blur()
-			m.reqMode = "list"
-			return m, nil
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEsc {
+		if m.requirements.ModalOpen {
+			var cmd tea.Cmd
+			m.requirements, cmd = m.requirements.Update(msg)
+			return m, cmd
 		}
 
-		if m.reqMode == "list" {
-			if len(m.installedPackages) > 0 {
-				switch msg.Type {
-				case tea.KeyUp:
-					if m.selectedReqIdx > 0 {
-						m.selectedReqIdx--
-					}
-					return m, nil
-				case tea.KeyDown:
-					if m.selectedReqIdx < len(m.installedPackages)-1 {
-						m.selectedReqIdx++
-					}
-					return m, nil
-				}
-			}
-
-			// Teclas para acciones
-			switch msg.Type {
-			case tea.KeyRunes:
-				if string(msg.Runes) == "i" {
-					// Entrar en modo instalar
-					m.reqMode = "install"
-					m.reqInput.Focus()
-					m.reqInput.SetValue("")
-					return m, nil
-				}
-			case tea.KeyDelete, tea.KeyBackspace:
-				// Desinstalar paquete seleccionado
-				if m.selectedReqIdx >= 0 && m.selectedReqIdx < len(m.installedPackages) {
-					pkg := m.installedPackages[m.selectedReqIdx]
-					m.reqLoading = true
-					m.reqErr = nil
-					return m, uninstallPackage(m.packageManager, pkg.Name)
-				}
-			}
-		} else if m.reqMode == "install" {
-			if msg.Type == tea.KeyEsc {
-				m.reqMode = "list"
-				m.reqInput.Blur()
-				m.reqInput.SetValue("")
-				return m, nil
-			}
-			if msg.Type == tea.KeyEnter {
-				pkgName := strings.TrimSpace(m.reqInput.Value())
-				if pkgName != "" {
-					m.reqMode = "list"
-					m.reqLoading = true
-					m.reqErr = nil
-					m.reqInput.Blur()
-					m.reqInput.SetValue("")
-					return m, installPackage(m.packageManager, pkgName)
-				}
-			}
-		}
-
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-
-	case requirementsDoneMsg:
-		m.reqLoading = false
-		m.installedPackages = msg.Packages
-		m.reqErr = msg.Err
-		if msg.Err == nil && m.selectedReqIdx >= len(m.installedPackages) {
-			m.selectedReqIdx = len(m.installedPackages) - 1
-		}
-		if m.selectedReqIdx < 0 {
-			m.selectedReqIdx = 0
-		}
+		m.currentScreen = ScreenMainMenu
 		return m, nil
-
-	case installPkgDoneMsg:
-		m.reqLoading = true
-		if msg.Err != nil {
-			m.reqErr = msg.Err
-		}
-		// Recargar lista
-		return m, loadInstalledPackages(m.packageManager)
 	}
 
 	var cmd tea.Cmd
-	if m.reqMode == "install" {
-		m.reqInput, cmd = m.reqInput.Update(msg)
-	}
 	m.requirements, cmd = m.requirements.Update(msg)
 	return m, cmd
 }
