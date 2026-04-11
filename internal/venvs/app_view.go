@@ -1,4 +1,4 @@
-package main
+package venvs
 
 import (
 	"fmt"
@@ -6,15 +6,13 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-
-	"pipnest/internal/venvs"
 )
 
-func (m venvsModel) View() string {
+func (m Model) View() string {
 	if m.view.Width <= 0 || m.view.Height <= 0 {
 		return ""
 	}
-	if m.view.Width < minVenvsWidth || m.view.Height < minVenvsHeight {
+	if m.view.Width < minWidth || m.view.Height < minHeight {
 		return m.renderInsufficientSpace()
 	}
 
@@ -45,11 +43,11 @@ func (m venvsModel) View() string {
 	return ui + "\n" + legend
 }
 
-func (m venvsModel) renderInsufficientSpace() string {
+func (m Model) renderInsufficientSpace() string {
 	message := strings.Join([]string{
 		"Not enough terminal space",
 		fmt.Sprintf("Current: %dx%d", m.view.Width, m.view.Height),
-		fmt.Sprintf("Minimum: %dx%d", minVenvsWidth, minVenvsHeight),
+		fmt.Sprintf("Minimum: %dx%d", minWidth, minHeight),
 		"Resize the terminal to continue.",
 	}, "\n")
 
@@ -62,7 +60,7 @@ func (m venvsModel) renderInsufficientSpace() string {
 	return lipgloss.Place(m.view.Width, m.view.Height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func (m venvsModel) renderLeftPanel(width, height int) string {
+func (m Model) renderLeftPanel(width, height int) string {
 	focused := !m.focusPackages
 	innerHeight := max(1, height-4)
 	maxW := max(1, width-4)
@@ -75,10 +73,10 @@ func (m venvsModel) renderLeftPanel(width, height int) string {
 
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#999999"))
 	lines := []string{
-		muted.Render(truncate(currentLabel, maxW)),
-		venvs.StyleForInterpreter(m.view.InterpreterKind).Render(truncate(currentValue, maxW)),
+		muted.Render(truncateLine(currentLabel, maxW)),
+		StyleForInterpreter(m.view.InterpreterKind).Render(truncateLine(currentValue, maxW)),
 		"",
-		lipgloss.NewStyle().Bold(true).Render(truncate("Interpreter dropdown", maxW)),
+		lipgloss.NewStyle().Bold(true).Render(truncateLine("Interpreter dropdown", maxW)),
 	}
 
 	if m.dropdownOpen {
@@ -99,7 +97,7 @@ func (m venvsModel) renderLeftPanel(width, height int) string {
 			if option.Path != "" {
 				label = fmt.Sprintf("%s - %s", option.Label, option.Path)
 			}
-			label = truncate(label, maxWidth)
+			label = truncateLine(label, maxWidth)
 			var lineStyle lipgloss.Style
 			if i == m.selected && focused {
 				lineStyle = lipgloss.NewStyle().Background(lipgloss.Color(focusHighlightColor)).Foreground(lipgloss.Color("230"))
@@ -111,7 +109,7 @@ func (m venvsModel) renderLeftPanel(width, height int) string {
 			lines = append(lines, lineStyle.Render(label))
 		}
 	} else {
-		lines = append(lines, muted.Render(truncate("Press Enter to open", maxW)))
+		lines = append(lines, muted.Render(truncateLine("Press Enter to open", maxW)))
 	}
 
 	lines = fillToHeight(lines, innerHeight)
@@ -122,14 +120,14 @@ func (m venvsModel) renderLeftPanel(width, height int) string {
 		Render(strings.Join(lines, "\n"))
 }
 
-func (m *venvsModel) renderDetailsAndPackagesPanel(width, height int) string {
+func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 	details := m.highlighted
 	innerHeight := max(1, height-4)
 	maxW := max(1, width-4)
 
 	kind := details.Kind
 	if kind == "" {
-		kind = venvs.InterpreterGlobal
+		kind = InterpreterGlobal
 	}
 	path := details.Path
 	if path == "" {
@@ -138,16 +136,16 @@ func (m *venvsModel) renderDetailsAndPackagesPanel(width, height int) string {
 
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("#999999"))
 	lines := []string{
-		muted.Render(truncate("Highlighted interpreter", maxW)),
-		venvs.StyleForInterpreter(kind).Render(truncate(path, maxW)),
-		muted.Render(truncate("Version: "+valueOrUnknown(details.Version), maxW)),
-		muted.Render(truncate("Size: "+valueOrUnknown(details.SizeLabel), maxW)),
-		muted.Render(truncate("Created: "+valueOrUnknown(details.CreatedAtLabel), maxW)),
-		muted.Render(truncate("Updated: "+valueOrUnknown(details.UpdatedAtLabel), maxW)),
-		muted.Render(truncate(fmt.Sprintf("Packages: %d", details.PackageCount), maxW)),
-		muted.Render(truncate("Cmd: "+valueOrUnknown(details.ActivationCommand), maxW)),
+		muted.Render(truncateLine("Highlighted interpreter", maxW)),
+		StyleForInterpreter(kind).Render(truncateLine(path, maxW)),
+		muted.Render(truncateLine("Version: "+valueOrUnknown(details.Version), maxW)),
+		muted.Render(truncateLine("Size: "+valueOrUnknown(details.SizeLabel), maxW)),
+		muted.Render(truncateLine("Created: "+valueOrUnknown(details.CreatedAtLabel), maxW)),
+		muted.Render(truncateLine("Updated: "+valueOrUnknown(details.UpdatedAtLabel), maxW)),
+		muted.Render(truncateLine(fmt.Sprintf("Packages: %d", details.PackageCount), maxW)),
+		muted.Render(truncateLine("Cmd: "+valueOrUnknown(details.ActivationCommand), maxW)),
 		"",
-		muted.Render(truncate("Installed packages", maxW)),
+		muted.Render(truncateLine("Installed packages", maxW)),
 	}
 
 	if len(details.Packages) == 0 {
@@ -184,10 +182,10 @@ func (m *venvsModel) renderDetailsAndPackagesPanel(width, height int) string {
 		if end > len(details.Packages) {
 			end = len(details.Packages)
 		}
-		pkgMaxW := max(1, maxW-2) // account for "> " / "  " prefix
+		pkgMaxW := max(1, maxW-2)
 		for i := m.packageScroll; i < end && len(lines) < innerHeight; i++ {
 			item := details.Packages[i]
-			label := truncate(fmt.Sprintf("%s %s", item.Name, item.Version), pkgMaxW)
+			label := truncateLine(fmt.Sprintf("%s %s", item.Name, item.Version), pkgMaxW)
 			selected := i == m.packageSelected && m.focusPackages
 			if selected {
 				label = "> " + label
@@ -215,7 +213,7 @@ func (m *venvsModel) renderDetailsAndPackagesPanel(width, height int) string {
 		Render(strings.Join(lines, "\n"))
 }
 
-func (m venvsModel) renderLegend() string {
+func (m Model) renderLegend() string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#f2f2f2"))
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#999999"))
 
@@ -228,6 +226,8 @@ func (m venvsModel) renderLegend() string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("r"), sepStyle.Render(": REPL"),
 		sepStyle.Render("  |  "),
+		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
+		sepStyle.Render("  |  "),
 		keyStyle.Render("q"), sepStyle.Render(": quit"),
 	)
 	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
@@ -239,7 +239,7 @@ func (m venvsModel) renderLegend() string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer, rightLegend)
 }
 
-func (m venvsModel) renderREPLModal() string {
+func (m Model) renderREPLModal() string {
 	selectedPath := "No interpreter selected"
 	if len(m.interpreters) > 0 && m.selected < len(m.interpreters) {
 		selectedPath = m.interpreters[m.selected].Path
@@ -275,28 +275,6 @@ func fillToHeight(lines []string, height int) []string {
 		lines = append(lines, "")
 	}
 	return lines
-}
-
-// truncate middle-truncates value to fit within maxWidth terminal columns.
-func truncate(value string, maxWidth int) string {
-	if maxWidth <= 0 {
-		return ""
-	}
-	if lipgloss.Width(value) <= maxWidth {
-		return value
-	}
-	const ellipsis = "..."
-	if maxWidth <= len(ellipsis) {
-		return strings.Repeat(".", maxWidth)
-	}
-	remaining := maxWidth - len(ellipsis)
-	runes := []rune(value)
-	if remaining >= len(runes) {
-		return value
-	}
-	left := remaining / 2
-	right := remaining - left
-	return string(runes[:left]) + ellipsis + string(runes[len(runes)-right:])
 }
 
 func splitTwoWidths(total int) (int, int) {

@@ -1,4 +1,5 @@
-package pkgsearch
+// TO DELETE AFTER
+package requirements
 
 import (
 	"encoding/json"

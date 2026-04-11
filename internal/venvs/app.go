@@ -1,4 +1,4 @@
-package main
+package venvs
 
 import (
 	"fmt"
@@ -6,13 +6,25 @@ import (
 	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"pipnest/internal/venvs"
 )
 
-type venvsModel struct {
-	view              venvs.ViewModel
-	interpreters      []venvs.InterpreterOption
+// BackMsg is sent when the user wants to return to the main menu.
+type BackMsg struct{}
+
+const (
+	focusHighlightColor = "57"
+	minWidth            = 72
+	minHeight           = 14
+)
+
+type replFinishedMsg struct {
+	err error
+}
+
+// Model holds the full state of the venvs screen.
+type Model struct {
+	view              ViewModel
+	interpreters      []InterpreterOption
 	selected          int
 	dropdownOpen      bool
 	focusPackages     bool
@@ -23,35 +35,26 @@ type venvsModel struct {
 	activationCommand string
 	activationMessage string
 	startedWithVenv   bool
-	detailsCache      map[string]venvs.InterpreterDetails
-	highlighted       venvs.InterpreterDetails
+	detailsCache      map[string]InterpreterDetails
+	highlighted       InterpreterDetails
 }
 
-const (
-	focusHighlightColor = "57"
-	minVenvsWidth       = 72
-	minVenvsHeight      = 14
-)
-
-type replFinishedMsg struct {
-	err error
-}
-
-func newVenvsModel() venvsModel {
-	model := venvsModel{
-		view:            venvs.NewViewModel(),
-		interpreters:    venvs.ListInterpreters(),
+// NewModel initialises a ready-to-use venvs Model.
+func NewModel() Model {
+	m := Model{
+		view:            NewViewModel(),
+		interpreters:    ListInterpreters(),
 		startedWithVenv: os.Getenv("VIRTUAL_ENV") != "",
-		detailsCache:    make(map[string]venvs.InterpreterDetails),
+		detailsCache:    make(map[string]InterpreterDetails),
 	}
-	model.applySelection()
-	model.refreshHighlightedDetails()
-	return model
+	m.applySelection()
+	m.refreshHighlightedDetails()
+	return m
 }
 
-func (m venvsModel) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd { return nil }
 
-func (m venvsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.replModalOpen {
@@ -77,11 +80,10 @@ func (m venvsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.replStatus = "REPL closed"
 		}
 	}
-
 	return m, nil
 }
 
-func (m venvsModel) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.replModalOpen = false
@@ -109,7 +111,7 @@ func (m venvsModel) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m venvsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC || msg.String() == "q" {
 		m.applySelection()
 		return m, tea.Quit
@@ -143,7 +145,8 @@ func (m venvsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.focusPackages = false
 			return m, nil
 		}
-		return m, tea.Quit
+		// Return to main menu
+		return m, func() tea.Msg { return BackMsg{} }
 	}
 	if msg.Type == tea.KeyEnter {
 		return m.handleEnter()
@@ -157,7 +160,7 @@ func (m venvsModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m venvsModel) handleEnter() (tea.Model, tea.Cmd) {
+func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if len(m.interpreters) == 0 {
 		return m, nil
 	}
@@ -176,7 +179,7 @@ func (m venvsModel) handleEnter() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m venvsModel) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "k":
 		m.scrollPackages(-1)
@@ -196,7 +199,7 @@ func (m venvsModel) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m venvsModel) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "k":
 		if m.selected > 0 {
@@ -228,7 +231,7 @@ func (m venvsModel) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *venvsModel) applySelection() {
+func (m *Model) applySelection() {
 	if len(m.interpreters) == 0 {
 		m.activationCommand = ""
 		return
@@ -251,15 +254,15 @@ func (m *venvsModel) applySelection() {
 	m.view.InterpreterKind = selected.Kind
 	m.activationCommand = selected.ActivationCommand()
 	m.activationMessage = "Activation command copied to clipboard. Paste and run it in your shell."
-	if selected.Kind == venvs.InterpreterGlobal && m.startedWithVenv {
+	if selected.Kind == InterpreterGlobal && m.startedWithVenv {
 		m.activationCommand = fmt.Sprintf("deactivate # switched to global interpreter: %s", selected.Path)
 		m.activationMessage = "Detected active venv at launch and selected global interpreter. Copied 'deactivate' command to clipboard."
 	}
 }
 
-func (m *venvsModel) refreshHighlightedDetails() {
+func (m *Model) refreshHighlightedDetails() {
 	if len(m.interpreters) == 0 {
-		m.highlighted = venvs.InterpreterDetails{}
+		m.highlighted = InterpreterDetails{}
 		m.packageSelected = 0
 		m.packageScroll = 0
 		return
@@ -277,9 +280,9 @@ func (m *venvsModel) refreshHighlightedDetails() {
 	m.packageScroll = 0
 }
 
-func (m *venvsModel) loadDetails(option venvs.InterpreterOption) venvs.InterpreterDetails {
+func (m *Model) loadDetails(option InterpreterOption) InterpreterDetails {
 	if option.Path == "" {
-		return venvs.InterpreterDetails{}
+		return InterpreterDetails{}
 	}
 	if details, exists := m.detailsCache[option.Path]; exists {
 		return details
@@ -289,10 +292,19 @@ func (m *venvsModel) loadDetails(option venvs.InterpreterOption) venvs.Interpret
 	return details
 }
 
-func (m venvsModel) ActivationCommand() string { return m.activationCommand }
-func (m venvsModel) ActivationMessage() string  { return m.activationMessage }
+// SetSize sets the terminal dimensions on the model.
+func (m *Model) SetSize(width, height int) {
+	m.view.Width = width
+	m.view.Height = height
+}
 
-func (m *venvsModel) scrollPackages(delta int) {
+// ActivationCommand returns the shell command to activate the selected interpreter.
+func (m Model) ActivationCommand() string { return m.activationCommand }
+
+// ActivationMessage returns a human-readable message about the activation command.
+func (m Model) ActivationMessage() string { return m.activationMessage }
+
+func (m *Model) scrollPackages(delta int) {
 	if len(m.highlighted.Packages) == 0 {
 		return
 	}
