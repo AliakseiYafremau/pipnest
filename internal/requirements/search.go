@@ -1,4 +1,4 @@
-package pkgsearch
+package requirements
 
 import (
 	"encoding/json"
