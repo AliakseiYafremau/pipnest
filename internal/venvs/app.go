@@ -63,6 +63,7 @@ func NewModel() Model {
 		startedWithVenv: os.Getenv("VIRTUAL_ENV") != "",
 		detailsCache:    make(map[string]InterpreterDetails),
 	}
+	m.restoreSelectionFromProject()
 	m.applySelection()
 
 	// Initialize highlighted with the first interpreter's basic info
@@ -540,6 +541,7 @@ func (m *Model) applySelection() {
 		m.activationMessage = ""
 		return
 	}
+	m.persistSelectionForProject(selected)
 
 	m.view.Interpreter = selected.Path
 	m.view.InterpreterKind = selected.Kind

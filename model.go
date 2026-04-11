@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
+	"pipnest/internal/requirements"
 	"strings"
 
 	"pipnest/internal/cheatsheet"
-	"pipnest/internal/requirements"
 	pm "pipnest/internal/requirements/package_manager"
 	"pipnest/internal/venvs"
 
@@ -31,6 +31,7 @@ type model struct {
 	// Navigation
 	currentScreen ScreenID
 	menuCursor    int
+	konamiIndex   int
 	requirements  requirements.ViewModel
 
 	// Packages screen
@@ -60,6 +61,27 @@ type model struct {
 
 	// Venvs screen
 	venvsApp *venvs.Model
+}
+
+var konamiSequence = []tea.KeyType{
+	tea.KeyUp,
+	tea.KeyUp,
+	tea.KeyDown,
+	tea.KeyDown,
+	tea.KeyLeft,
+	tea.KeyRight,
+	tea.KeyLeft,
+	tea.KeyRight,
+}
+
+func nextKonamiIndex(current int, key tea.KeyType) int {
+	if current < len(konamiSequence) && key == konamiSequence[current] {
+		return current + 1
+	}
+	if key == konamiSequence[0] {
+		return 1
+	}
+	return 0
 }
 
 const (
@@ -135,12 +157,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateVenvs(msg)
 	case ScreenCheatSheet:
 		return m.updateCheat(msg)
+	case ScreenEasterEgg:
+		return m.updateEasterEgg(msg)
 	}
 
 	return m, nil
 }
 
 // updateMainMenu: Lógica del menú principal
+// Easter Egg (macarrones version): Arriba, Arriba, Abajo, Abajo, Izquierda, Derecha, Izquierda, Derecha
 func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -149,51 +174,131 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.menuCursor > 0 {
 				m.menuCursor--
 			}
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
 		case tea.KeyDown:
 			if m.menuCursor < len(MainMenuItems)-1 {
 				m.menuCursor++
 			}
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
+		case tea.KeyLeft:
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
+		case tea.KeyRight:
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
 		case tea.KeyEnter:
-			selectedItem := MainMenuItems[m.menuCursor]
-			m.currentScreen = selectedItem.Target
-			m.menuCursor = 0
-
-			if m.currentScreen == ScreenRequirements {
-				var cmd tea.Cmd
-				m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-				return m, cmd
-			}
-
-			if m.currentScreen == ScreenPackages {
-				m.input.Focus()
-			}
-			if m.currentScreen == ScreenRequirements {
-				// Cargar lista de paquetes
-				m.reqLoading = true
-				m.reqErr = nil
-				return m, loadInstalledPackages(m.packageManager)
-			}
-			if m.currentScreen == ScreenCheatSheet {
-				m.cheatSearch.Focus()
-				m.cheatSelected = 0
-				m.cheatScrollOffset = 0
-			}
-			if m.currentScreen == ScreenVenvs {
-				v := venvs.NewModel()
-				v.SetSize(m.width, m.height)
-				m.venvsApp = &v
-				return m, m.venvsApp.Init()
-			}
+			return m.activateMainMenuSelection()
 		case tea.KeyRunes:
-			if msg.String() == "q" {
+			runeKey := strings.ToLower(msg.String())
+			if runeKey == "q" {
 				return m, tea.Quit
+			}
+			if runeKey == "j" {
+				if m.menuCursor < len(MainMenuItems)-1 {
+					m.menuCursor++
+				}
+				m.konamiIndex = 0
+				return m, nil
+			}
+			if runeKey == "k" {
+				if m.menuCursor > 0 {
+					m.menuCursor--
+				}
+				m.konamiIndex = 0
+				return m, nil
+			}
+			if idx := findMainMenuIndexByInitial(runeKey); idx >= 0 {
+				m.menuCursor = idx
+				return m.activateMainMenuSelection()
+			}
+		default:
+			m.konamiIndex = 0
+		}
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseLeft {
+			if idx := mainMenuItemAtPosition(m, msg.X, msg.Y); idx >= 0 {
+				m.menuCursor = idx
+				return m.activateMainMenuSelection()
 			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	}
+
+	if m.konamiIndex >= len(konamiSequence) {
+		m.currentScreen = ScreenEasterEgg
+		m.konamiIndex = 0
+	}
+
 	return m, nil
+}
+
+func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
+	selectedItem := MainMenuItems[m.menuCursor]
+	m.currentScreen = selectedItem.Target
+	m.menuCursor = 0
+	m.konamiIndex = 0
+
+	if m.currentScreen == ScreenRequirements {
+		var cmd tea.Cmd
+		m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, cmd
+	}
+
+	if m.currentScreen == ScreenPackages {
+		m.input.Focus()
+	}
+	if m.currentScreen == ScreenRequirements {
+		m.reqLoading = true
+		m.reqErr = nil
+		return m, loadInstalledPackages(m.packageManager)
+	}
+	if m.currentScreen == ScreenCheatSheet {
+		m.cheatSearch.Focus()
+		m.cheatSelected = 0
+		m.cheatScrollOffset = 0
+	}
+	if m.currentScreen == ScreenVenvs {
+		v := venvs.NewModel()
+		v.SetSize(m.width, m.height)
+		m.venvsApp = &v
+		return m, m.venvsApp.Init()
+	}
+
+	return m, nil
+}
+
+func findMainMenuIndexByInitial(input string) int {
+	if input == "" {
+		return -1
+	}
+	for i, item := range MainMenuItems {
+		label := strings.TrimSpace(strings.ToLower(item.Label))
+		if label == "" {
+			continue
+		}
+		if strings.HasPrefix(label, input) {
+			return i
+		}
+	}
+	return -1
+}
+
+func mainMenuItemAtPosition(m model, x, y int) int {
+	if m.width < mainMenuMinWidth || m.height < mainMenuMinHeight {
+		return -1
+	}
+	geom := computeMainMenuGeometry(m)
+	if x < geom.startX || x >= geom.startX+geom.menuWidth {
+		return -1
+	}
+	if y < geom.optionStartY || y >= geom.optionStartY+len(MainMenuItems) {
+		return -1
+	}
+	idx := y - geom.optionStartY
+	if idx < 0 || idx >= len(MainMenuItems) {
+		return -1
+	}
+	return idx
 }
 
 // updatePackages: Lógica de búsqueda de paquetes
@@ -416,11 +521,19 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) ActivationCommand() string {
-	if m.venvsApp != nil {
-		return m.venvsApp.ActivationCommand()
+func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
+			m.menuCursor = 0
+			return m, nil
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	}
-	return ""
+	return m, nil
 }
 
 func (m model) ActivationMessage() string {
@@ -442,6 +555,8 @@ func (m model) View() string {
 		return renderVenvsScreen(m)
 	case ScreenCheatSheet:
 		return renderCheatScreen(m)
+	case ScreenEasterEgg:
+		return renderEasterEgg(m)
 	}
 	return ""
 }
