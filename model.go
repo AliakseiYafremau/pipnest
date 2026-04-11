@@ -2,7 +2,13 @@ package main
 
 import (
 	"pipnest/internal/requirements"
+	"context"
 	"strings"
+
+	"pipnest/internal/cheatsheet"
+	"pipnest/internal/requirements"
+	pm "pipnest/internal/requirements/package_manager"
+	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -15,11 +21,21 @@ type searchResult = requirements.Result
 
 type searchDoneMsg = requirements.DoneMsg
 
+type requirementsDoneMsg struct {
+	Packages []pm.Dependency
+	Err      error
+}
+
+type installPkgDoneMsg struct {
+	Err error
+}
+
 type model struct {
 	// Navigation
 	currentScreen ScreenID
 	menuCursor    int
 	konamiIndex   int
+	requirements  requirements.ViewModel
 
 	// Packages screen
 	input    textinput.Model
@@ -31,11 +47,23 @@ type model struct {
 	loading  bool
 	err      error
 
+	// Requirements screen
+	installedPackages []pm.Dependency
+	selectedReqIdx    int
+	reqLoading        bool
+	reqErr            error
+	reqInput          textinput.Model
+	packageManager    pm.PackageManager
+	reqMode           string // "list" o "install"
+
 	// Cheatsheet screen
 	cheatSearch       textinput.Model
 	cheatSelected     int
 	filteredCommands  []cheatsheet.CheatCommand
 	cheatScrollOffset int
+
+	// Venvs screen
+	venvsApp *venvs.Model
 }
 
 var konamiSequence = []tea.KeyType{
@@ -71,25 +99,53 @@ func initialModel() model {
 	cheatInput := textinput.New()
 	cheatInput.Placeholder = "Search commands..."
 
+	reqInput := textinput.New()
+	reqInput.Placeholder = "Package name to install..."
+
 	return model{
 		currentScreen:     ScreenMainMenu,
 		menuCursor:        0,
+		requirements:      requirements.NewViewModel(),
 		input:             ti,
 		cheatSearch:       cheatInput,
 		cheatSelected:     0,
 		filteredCommands:  cheatsheet.CheatCommands,
 		cheatScrollOffset: 0,
+		reqInput:          reqInput,
+		packageManager:    pm.NewPipManager(""),
+		reqMode:           "list",
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.requirements.Init()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle Ctrl+C globally
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
+	}
+
+	// Handle back navigation from venvs screen
+	if _, ok := msg.(venvs.BackMsg); ok {
+		m.currentScreen = ScreenMainMenu
+		return m, nil
+	}
+
+	// Always propagate window size to all sub-models
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = ws.Width
+		m.height = ws.Height
+		var cmd tea.Cmd
+		m.requirements, cmd = m.requirements.Update(ws)
+		if m.venvsApp != nil {
+			updated, _ := m.venvsApp.Update(ws)
+			if vm, ok := updated.(*venvs.Model); ok {
+				m.venvsApp = vm
+			}
+		}
+		_ = cmd
 	}
 
 	// Navegar según la pantalla actual
@@ -136,13 +192,32 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentScreen = selectedItem.Target
 			m.menuCursor = 0
 			m.konamiIndex = 0
+
+			if m.currentScreen == ScreenRequirements {
+				var cmd tea.Cmd
+				m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+				return m, cmd
+			}
+
 			if m.currentScreen == ScreenPackages {
 				m.input.Focus()
+			}
+			if m.currentScreen == ScreenRequirements {
+				// Cargar lista de paquetes
+				m.reqLoading = true
+				m.reqErr = nil
+				return m, loadInstalledPackages(m.packageManager)
 			}
 			if m.currentScreen == ScreenCheatSheet {
 				m.cheatSearch.Focus()
 				m.cheatSelected = 0
 				m.cheatScrollOffset = 0
+			}
+			if m.currentScreen == ScreenVenvs {
+				v := venvs.NewModel()
+				v.SetSize(m.width, m.height)
+				m.venvsApp = &v
+				return m, m.venvsApp.Init()
 			}
 		case tea.KeyRunes:
 			if msg.String() == "q" {
@@ -235,30 +310,36 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateRequirements: Lógica para pantalla de requirements
 func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.Type == tea.KeyEsc {
-			m.currentScreen = ScreenMainMenu
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEsc {
+		if m.requirements.ModalOpen {
+			var cmd tea.Cmd
+			m.requirements, cmd = m.requirements.Update(msg)
+			return m, cmd
 		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+
+		m.currentScreen = ScreenMainMenu
+		return m, nil
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.requirements, cmd = m.requirements.Update(msg)
+	return m, cmd
 }
 
 // updateVenvs: Lógica para pantalla de venvs
 func (m model) updateVenvs(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.Type == tea.KeyEsc {
-			m.currentScreen = ScreenMainMenu
-		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+	if m.venvsApp == nil {
+		return m, nil
 	}
-	return m, nil
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = ws.Width
+		m.height = ws.Height
+	}
+	updated, cmd := m.venvsApp.Update(msg)
+	if vm, ok := updated.(*venvs.Model); ok {
+		m.venvsApp = vm
+	}
+	return m, cmd
 }
 
 // updateCheat: Lógica para pantalla de cheatsheet
@@ -391,6 +472,18 @@ func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	}
 	return m, nil
+func (m model) ActivationCommand() string {
+	if m.venvsApp != nil {
+		return m.venvsApp.ActivationCommand()
+	}
+	return ""
+}
+
+func (m model) ActivationMessage() string {
+	if m.venvsApp != nil {
+		return m.venvsApp.ActivationMessage()
+	}
+	return ""
 }
 
 func (m model) View() string {
@@ -409,4 +502,36 @@ func (m model) View() string {
 		return renderEasterEgg(m)
 	}
 	return ""
+}
+
+// Funciones asincrónicas para requirements
+
+func loadInstalledPackages(pkgMgr pm.PackageManager) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*1000*1000*1000) // 30s en nanosegundos
+		defer cancel()
+
+		packages, err := pkgMgr.List(ctx)
+		return requirementsDoneMsg{Packages: packages, Err: err}
+	}
+}
+
+func installPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
+		defer cancel()
+
+		err := pkgMgr.Install(ctx, pkgName)
+		return installPkgDoneMsg{Err: err}
+	}
+}
+
+func uninstallPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
+		defer cancel()
+
+		err := pkgMgr.Remove(ctx, pkgName)
+		return installPkgDoneMsg{Err: err}
+	}
 }

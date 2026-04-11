@@ -85,7 +85,7 @@ func (m *PoetryManager) List(ctx context.Context) ([]Dependency, error) {
 }
 
 func (m *PoetryManager) Search(ctx context.Context, query string) ([]Dependency, error) {
-	return nil, errors.New("search is not supported by poetry")
+	return SearchPackages(ctx, query)
 }
 
 func (m *PoetryManager) Remove(ctx context.Context, pkgName string) error {

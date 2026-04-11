@@ -44,6 +44,7 @@ var (
 	packageIndex       []packageNameEntry
 	packageIndexErr    error
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
+	indexCache         *IndexCache
 )
 
 func Search(query string) tea.Cmd {
@@ -100,7 +101,8 @@ func fetchResults(query string) ([]Result, error) {
 
 func loadPackageIndex() ([]packageNameEntry, error) {
 	packageIndexOnce.Do(func() {
-		packageIndex, packageIndexErr = fetchPackageIndex()
+		indexCache = NewIndexCache()
+		packageIndex, packageIndexErr = indexCache.LoadOrFetch()
 	})
 	return packageIndex, packageIndexErr
 }
@@ -171,7 +173,7 @@ func fetchPackageMetadata(name string) (Result, error) {
 	}
 
 	var payload packagePayload
-	if err := jsonUnmarshal(body, &payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return Result{}, err
 	}
 
@@ -256,17 +258,10 @@ func levenshteinDistance(a, b string) int {
 			deletion := previous[j] + 1
 			insertion := current[j-1] + 1
 			substitution := previous[j-1] + cost
-			current[j] = minInt(deletion, minInt(insertion, substitution))
+			current[j] = min(deletion, min(insertion, substitution))
 		}
 		previous = current
 	}
 
 	return previous[len(b)]
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

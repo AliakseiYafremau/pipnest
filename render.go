@@ -295,32 +295,24 @@ func renderPackagesScreen(m model) string {
 
 // renderRequirementsScreen: Renderiza la pantalla de requirements
 func renderRequirementsScreen(m model) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	if m.width == 0 {
+		return ""
+	}
 
-	var lines []string
-	lines = append(lines, titleStyle.Render("📋 Requirements"))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("Coming soon..."))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("ESC to return to menu"))
+	body := m.requirements.View()
+	if body == "" {
+		return ""
+	}
 
-	return strings.Join(lines, "\n")
+	return body
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
 func renderVenvsScreen(m model) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-	var lines []string
-	lines = append(lines, titleStyle.Render("🐍 Virtual Environments"))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("Coming soon..."))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("ESC to return to menu"))
-
-	return strings.Join(lines, "\n")
+	if m.venvsApp == nil {
+		return ""
+	}
+	return m.venvsApp.View()
 }
 
 func renderCheatScreen(m model) string {
@@ -451,30 +443,57 @@ func renderCheatScreen(m model) string {
 	// Agregar serpiente decorativa en el panel de detalles
 	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
 
-	// Filtrar líneas vacías
-	var filteredSnekLines []string
-	for _, line := range snekLines {
-		if strings.TrimSpace(line) != "" {
-			filteredSnekLines = append(filteredSnekLines, line)
+	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
+	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
+	maxSnekLines := (contentHeight - len(detailLines)) - 2
+	panelInner := detailsWidth - 4
+
+	snekMaxWidth := 0
+	for _, sl := range snekLines {
+		if w := lipgloss.Width(sl); w > snekMaxWidth {
+			snekMaxWidth = w
 		}
 	}
 
-	maxSnekLines := (contentHeight - len(detailLines)) - 2 // Dejar espacio
-	if maxSnekLines > 0 {
+	if maxSnekLines > 0 && snekMaxWidth > 0 {
 		detailLines = append(detailLines, "")
-		// Agregar líneas de la serpiente
-		for i := 0; i < maxSnekLines && i < len(filteredSnekLines); i++ {
-			snekLine := filteredSnekLines[i]
-			// Truncar línea si es muy larga
-			if len(snekLine) > detailsWidth-4 {
-				snekLine = truncateText(snekLine, detailsWidth-4)
+		for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
+			snekLine := snekLines[i]
+			lineWidth := lipgloss.Width(snekLine)
+			if lineWidth == 0 {
+				detailLines = append(detailLines, "")
+				continue
+			}
+			if lineWidth <= panelInner {
+				pad := (panelInner - lineWidth) / 2
+				snekLine = strings.Repeat(" ", pad) + snekLine
+			} else {
+				type cp struct {
+					r rune
+					x int
+				}
+				var chars []cp
+				col := 0
+				for _, r := range snekLine {
+					chars = append(chars, cp{r, col})
+					col++
+				}
+				scaledRunes := make([]rune, panelInner)
+				for j := range scaledRunes {
+					scaledRunes[j] = ' '
+				}
+				for _, c := range chars {
+					newX := 0
+					if snekMaxWidth > 1 {
+						newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
+					}
+					if newX >= 0 && newX < panelInner {
+						scaledRunes[newX] = c.r
+					}
+				}
+				snekLine = strings.TrimRight(string(scaledRunes), " ")
 			}
 			detailLines = append(detailLines, snekStyle.Render(snekLine))
-		}
-	} else {
-		// Si no hay espacio, solo padding normal
-		for len(detailLines) < contentHeight-1 {
-			detailLines = append(detailLines, "")
 		}
 	}
 

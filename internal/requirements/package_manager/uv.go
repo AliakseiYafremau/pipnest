@@ -89,9 +89,8 @@ func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
 	return parsePipTable(out), nil
 }
 
-// NOT IMPLEMENTED
 func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, error) {
-	return nil, errors.New("search is not supported by uv")
+	return SearchPackages(ctx, query)
 }
 
 // uv pip uninstall -y <pkgName>
