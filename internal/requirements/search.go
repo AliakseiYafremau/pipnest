@@ -172,7 +172,7 @@ func fetchPackageMetadata(name string) (Result, error) {
 	}
 
 	var payload packagePayload
-	if err := jsonUnmarshal(body, &payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return Result{}, err
 	}
 
@@ -190,10 +190,6 @@ func fetchPackageMetadata(name string) (Result, error) {
 		Description: strings.TrimSpace(payload.Info.Summary),
 		URL:         projectURL,
 	}, nil
-}
-
-func jsonUnmarshal(body []byte, target any) error {
-	return json.Unmarshal(body, target)
 }
 
 func normalizeQuery(text string) string {
@@ -257,7 +253,7 @@ func levenshteinDistance(a, b string) int {
 			deletion := previous[j] + 1
 			insertion := current[j-1] + 1
 			substitution := previous[j-1] + cost
-			current[j] = minInt(deletion, minInt(insertion, substitution))
+			current[j] = min(deletion, min(insertion, substitution))
 		}
 		previous = current
 	}
@@ -265,9 +261,3 @@ func levenshteinDistance(a, b string) int {
 	return previous[len(b)]
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
