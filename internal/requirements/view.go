@@ -100,6 +100,11 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 			return m.updateInstallModal(msg)
 		}
 		return m.updateMainWindow(msg)
+	case tea.MouseMsg:
+		if m.ModalOpen {
+			return m, nil
+		}
+		return m.updateMainMouse(msg)
 	case listLoadedMsg:
 		m.LoadingList = false
 		if msg.Err != nil {
@@ -218,6 +223,18 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		}
 
 		switch msg.Runes[0] {
+		case 'j', 'J':
+			if m.Selected < len(m.Packages)-1 {
+				m.Selected++
+				m.ensureMainSelectionVisible(m.visibleMainRows())
+			}
+			return m, nil
+		case 'k', 'K':
+			if m.Selected > 0 {
+				m.Selected--
+				m.ensureMainSelectionVisible(m.visibleMainRows())
+			}
+			return m, nil
 		case 'i', 'I':
 			m.openModal()
 			m.setLog(logInfo, "Install mode opened")
@@ -246,6 +263,23 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.LoadingList = true
 			m.setLog(logLoading, "Refreshing installed packages...")
 			return m, m.loadInstalledCmd()
+		}
+	}
+
+	return m, nil
+}
+
+func (m ViewModel) updateMainMouse(msg tea.MouseMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		if m.Selected > 0 {
+			m.Selected--
+			m.ensureMainSelectionVisible(m.visibleMainRows())
+		}
+	case tea.MouseWheelDown:
+		if m.Selected < len(m.Packages)-1 {
+			m.Selected++
+			m.ensureMainSelectionVisible(m.visibleMainRows())
 		}
 	}
 
@@ -387,7 +421,12 @@ func (m ViewModel) View() string {
 		Width(rightWidth).
 		Height(bodyHeight - 2)
 
-	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, bodyHeight-4))
+	listRows := bodyHeight - 6
+	if listRows < 3 {
+		listRows = 3
+	}
+
+	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, listRows))
 	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
