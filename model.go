@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
+	"pipnest/internal/cheatsheet"
 	"pipnest/internal/pkgsearch"
 )
 
@@ -16,6 +16,11 @@ type searchResult = pkgsearch.Result
 type searchDoneMsg = pkgsearch.DoneMsg
 
 type model struct {
+	// Navigation
+	currentScreen ScreenID
+	menuCursor    int
+
+	// Packages screen
 	input    textinput.Model
 	width    int
 	height   int
@@ -24,6 +29,12 @@ type model struct {
 	selected int
 	loading  bool
 	err      error
+
+	// Cheatsheet screen
+	cheatSearch       textinput.Model
+	cheatSelected     int
+	filteredCommands  []cheatsheet.CheatCommand
+	cheatScrollOffset int
 }
 
 const (
@@ -34,20 +45,89 @@ const (
 func initialModel() model {
 	ti := textinput.New()
 	ti.Placeholder = "Search PyPI packages..."
-	ti.Focus()
 
-	return model{input: ti}
+	cheatInput := textinput.New()
+	cheatInput.Placeholder = "Search commands..."
+
+	return model{
+		currentScreen:     ScreenMainMenu,
+		menuCursor:        0,
+		input:             ti,
+		cheatSearch:       cheatInput,
+		cheatSelected:     0,
+		filteredCommands:  cheatsheet.CheatCommands,
+		cheatScrollOffset: 0,
+	}
 }
 
 func (m model) Init() tea.Cmd {
-	return textinput.Blink
+	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle Ctrl+C globally
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
+		return m, tea.Quit
+	}
+
+	// Navegar según la pantalla actual
+	switch m.currentScreen {
+	case ScreenMainMenu:
+		return m.updateMainMenu(msg)
+	case ScreenPackages:
+		return m.updatePackages(msg)
+	case ScreenRequirements:
+		return m.updateRequirements(msg)
+	case ScreenVenvs:
+		return m.updateVenvs(msg)
+	case ScreenCheatSheet:
+		return m.updateCheat(msg)
+	}
+
+	return m, nil
+}
+
+// updateMainMenu: Lógica del menú principal
+func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc {
-			return m, tea.Quit
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.menuCursor > 0 {
+				m.menuCursor--
+			}
+		case tea.KeyDown:
+			if m.menuCursor < len(MainMenuItems)-1 {
+				m.menuCursor++
+			}
+		case tea.KeyEnter:
+			selectedItem := MainMenuItems[m.menuCursor]
+			m.currentScreen = selectedItem.Target
+			m.menuCursor = 0
+			if m.currentScreen == ScreenPackages {
+				m.input.Focus()
+			}
+			if m.currentScreen == ScreenCheatSheet {
+				m.cheatSearch.Focus()
+				m.cheatSelected = 0
+				m.cheatScrollOffset = 0
+			}
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	}
+	return m, nil
+}
+
+// updatePackages: Lógica de búsqueda de paquetes
+func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
+			m.input.Blur()
+			return m, nil
 		}
 		if len(m.results) > 0 {
 			switch msg.Type {
@@ -109,70 +189,155 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) View() string {
-	if m.width == 0 {
-		return ""
-	}
-
-	inputHeight := topInputHeight
-	contentHeight := m.height - inputHeight - 1
-	if contentHeight < 4 {
-		contentHeight = 4
-	}
-	if contentHeight < 10 {
-		contentHeight = 10
-	}
-
-	leftPaneWidth := (m.width - 3) / 2
-	if leftPaneWidth < 24 {
-		leftPaneWidth = 24
-	}
-	rightPaneWidth := m.width - 3 - leftPaneWidth
-	if rightPaneWidth < 24 {
-		rightPaneWidth = 24
-	}
-
-	inputStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(m.width - 2).
-		Height(inputHeight - 2)
-
-	leftStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(leftPaneWidth).
-		Height(contentHeight - 2)
-
-	rightStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(rightPaneWidth).
-		Height(contentHeight - 2)
-
-	status := "Press Enter to search"
-	if m.loading {
-		status = "Searching..."
-	} else if m.query != "" {
-		status = fmt.Sprintf("Results for %q", m.query)
-	}
-	if m.err != nil {
-		status = "Search error: " + m.err.Error()
-	}
-
-	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
-	resultsBody := pkgsearch.RenderResults(m.results, leftPaneWidth-4, m.selected)
-	if resultsBody == "" {
-		if m.loading {
-			resultsBody = "Loading results..."
-		} else {
-			resultsBody = "Type a package name and press Enter."
+// updateRequirements: Lógica para pantalla de requirements
+func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
 		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 	}
-	selectedResult := pkgsearch.SelectedSearchResult(m.results, m.selected)
-	rightBody := pkgsearch.RenderPackageDetails(selectedResult, rightPaneWidth-4, m.loading, m.query, m.err)
+	return m, nil
+}
 
-	top := inputStyle.Render(inputBody)
-	leftPane := leftStyle.Render(resultsBody)
-	rightPane := rightStyle.Render(rightBody)
-	bottom := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, lipgloss.NewStyle().Width(1).Render("│"), rightPane)
+// updateVenvs: Lógica para pantalla de venvs
+func (m model) updateVenvs(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	}
+	return m, nil
+}
 
-	return top + "\n" + bottom
+// updateCheat: Lógica para pantalla de cheatsheet
+func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
+			m.cheatSearch.SetValue("")
+			m.cheatSearch.Blur()
+			m.cheatSelected = 0
+			m.cheatScrollOffset = 0
+			m.filteredCommands = cheatsheet.CheatCommands
+			return m, nil
+		}
+
+		// Solo procesar navegación si El Input NO tiene focus
+		if !m.cheatSearch.Focused() {
+			// Copiar comando al portapapeles con Enter
+			if msg.Type == tea.KeyEnter {
+				if m.cheatSelected >= 0 && m.cheatSelected < len(m.filteredCommands) {
+					cmd := m.filteredCommands[m.cheatSelected]
+					clipboard.WriteAll(cmd.Command)
+				}
+				return m, nil
+			}
+
+			// Navegación con Tab para cambiar entre input y lista
+			if msg.Type == tea.KeyTab {
+				m.cheatSearch.Focus()
+				return m, nil
+			}
+
+			// Navegación en la lista
+			switch msg.Type {
+			case tea.KeyUp:
+				if m.cheatSelected > 0 {
+					m.cheatSelected--
+				}
+			case tea.KeyDown:
+				if m.cheatSelected < len(m.filteredCommands)-1 {
+					m.cheatSelected++
+				}
+			case tea.KeyPgUp:
+				visibleLines := (m.height - 8) / 3 // Estimar líneas visibles
+				m.cheatSelected -= visibleLines
+				if m.cheatSelected < 0 {
+					m.cheatSelected = 0
+				}
+			case tea.KeyPgDown:
+				visibleLines := (m.height - 8) / 3
+				m.cheatSelected += visibleLines
+				if m.cheatSelected >= len(m.filteredCommands) {
+					m.cheatSelected = len(m.filteredCommands) - 1
+				}
+			case tea.KeyHome:
+				m.cheatSelected = 0
+			case tea.KeyEnd:
+				m.cheatSelected = len(m.filteredCommands) - 1
+			}
+		} else {
+			// Cuando el input tiene focus, permitir desenfocarse con la tecla de escape
+			if msg.Type == tea.KeyTab {
+				m.cheatSearch.Blur()
+				return m, nil
+			}
+		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	}
+
+	// Actualizar input de búsqueda
+	var cmd tea.Cmd
+	m.cheatSearch, cmd = m.cheatSearch.Update(msg)
+
+	// Filtrar comandos según búsqueda
+	m.filteredCommands = cheatsheet.FilterCommands(cheatsheet.CheatCommands, m.cheatSearch.Value())
+
+	// Ajustar la selección si está fuera de rango después del filtrado
+	if m.cheatSelected >= len(m.filteredCommands) {
+		m.cheatSelected = len(m.filteredCommands) - 1
+	}
+	if m.cheatSelected < 0 {
+		m.cheatSelected = 0
+	}
+
+	// Recalcular scroll offset para mantenerlo dentro de los límites
+	visibleLines := (m.height - 8) / 3
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
+
+	if m.cheatSelected >= m.cheatScrollOffset+visibleLines {
+		m.cheatScrollOffset = m.cheatSelected - visibleLines + 1
+	}
+	if m.cheatSelected < m.cheatScrollOffset {
+		m.cheatScrollOffset = m.cheatSelected
+	}
+
+	if m.cheatScrollOffset > len(m.filteredCommands)-visibleLines {
+		m.cheatScrollOffset = len(m.filteredCommands) - visibleLines
+	}
+	if m.cheatScrollOffset < 0 {
+		m.cheatScrollOffset = 0
+	}
+
+	return m, cmd
+}
+
+func (m model) View() string {
+	switch m.currentScreen {
+	case ScreenMainMenu:
+		return renderMainMenu(m)
+	case ScreenPackages:
+		return renderPackagesScreen(m)
+	case ScreenRequirements:
+		return renderRequirementsScreen(m)
+	case ScreenVenvs:
+		return renderVenvsScreen(m)
+	case ScreenCheatSheet:
+		return renderCheatScreen(m)
+	}
+	return ""
 }
