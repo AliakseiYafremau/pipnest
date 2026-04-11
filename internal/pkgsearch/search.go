@@ -1,4 +1,4 @@
-package main
+package pkgsearch
 
 import (
 	"encoding/json"
@@ -14,6 +14,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+type Result struct {
+	Name        string
+	Version     string
+	Description string
+	URL         string
+}
+
+type DoneMsg struct {
+	Results []Result
+	Err     error
+}
 
 type packageNameEntry struct {
 	Name string
@@ -34,14 +46,14 @@ var (
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
 )
 
-func searchPyPI(query string) tea.Cmd {
+func Search(query string) tea.Cmd {
 	return func() tea.Msg {
-		results, err := fetchPyPIResults(query)
-		return searchDoneMsg{results: results, err: err}
+		results, err := fetchResults(query)
+		return DoneMsg{Results: results, Err: err}
 	}
 }
 
-func fetchPyPIResults(query string) ([]searchResult, error) {
+func fetchResults(query string) ([]Result, error) {
 	entries, err := loadPackageIndex()
 	if err != nil {
 		return nil, err
@@ -69,11 +81,11 @@ func fetchPyPIResults(query string) ([]searchResult, error) {
 		limit = len(scored)
 	}
 
-	results := make([]searchResult, 0, limit)
+	results := make([]Result, 0, limit)
 	for i := 0; i < limit; i++ {
 		metadata, err := fetchPackageMetadata(scored[i].entry.Name)
 		if err != nil {
-			results = append(results, searchResult{
+			results = append(results, Result{
 				Name:        scored[i].entry.Name,
 				URL:         scored[i].entry.URL,
 				Description: "Metadata unavailable.",
@@ -128,24 +140,24 @@ func fetchPackageIndex() ([]packageNameEntry, error) {
 	return entries, nil
 }
 
-func fetchPackageMetadata(name string) (searchResult, error) {
+func fetchPackageMetadata(name string) (Result, error) {
 	requestURL := "https://pypi.org/pypi/" + url.PathEscape(name) + "/json"
 	req, err := http.NewRequest(http.MethodGet, requestURL, nil)
 	if err != nil {
-		return searchResult{}, err
+		return Result{}, err
 	}
 	req.Header.Set("User-Agent", "lazypip/1.0")
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return searchResult{}, err
+		return Result{}, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return searchResult{}, err
+		return Result{}, err
 	}
 
 	type packagePayload struct {
@@ -160,7 +172,7 @@ func fetchPackageMetadata(name string) (searchResult, error) {
 
 	var payload packagePayload
 	if err := jsonUnmarshal(body, &payload); err != nil {
-		return searchResult{}, err
+		return Result{}, err
 	}
 
 	projectURL := payload.Info.ProjectURL
@@ -171,7 +183,7 @@ func fetchPackageMetadata(name string) (searchResult, error) {
 		projectURL = "https://pypi.org/project/" + url.PathEscape(name) + "/"
 	}
 
-	return searchResult{
+	return Result{
 		Name:        name,
 		Version:     payload.Info.Version,
 		Description: strings.TrimSpace(payload.Info.Summary),

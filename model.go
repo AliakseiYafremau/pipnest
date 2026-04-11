@@ -7,19 +7,13 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"pipnest/internal/pkgsearch"
 )
 
-type searchResult struct {
-	Name        string
-	Version     string
-	Description string
-	URL         string
-}
+type searchResult = pkgsearch.Result
 
-type searchDoneMsg struct {
-	results []searchResult
-	err     error
-}
+type searchDoneMsg = pkgsearch.DoneMsg
 
 type model struct {
 	input    textinput.Model
@@ -82,7 +76,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.query = query
 			m.loading = true
 			m.err = nil
-			return m, searchPyPI(query)
+			return m, pkgsearch.Search(query)
 		}
 	case tea.MouseMsg:
 		if msg.Type == tea.MouseLeft && len(m.results) > 0 {
@@ -94,15 +88,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case searchDoneMsg:
 		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err
+		if msg.Err != nil {
+			m.err = msg.Err
 			m.results = nil
 			m.selected = 0
 			return m, nil
 		}
 
 		m.err = nil
-		m.results = msg.results
+		m.results = msg.Results
 		m.selected = 0
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -164,7 +158,7 @@ func (m model) View() string {
 	}
 
 	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
-	resultsBody := renderResults(m.results, leftPaneWidth-4, m.selected)
+	resultsBody := pkgsearch.RenderResults(m.results, leftPaneWidth-4, m.selected)
 	if resultsBody == "" {
 		if m.loading {
 			resultsBody = "Loading results..."
@@ -172,8 +166,8 @@ func (m model) View() string {
 			resultsBody = "Type a package name and press Enter."
 		}
 	}
-	selectedResult := selectedSearchResult(m.results, m.selected)
-	rightBody := renderPackageDetails(selectedResult, rightPaneWidth-4, m.loading, m.query, m.err)
+	selectedResult := pkgsearch.SelectedSearchResult(m.results, m.selected)
+	rightBody := pkgsearch.RenderPackageDetails(selectedResult, rightPaneWidth-4, m.loading, m.query, m.err)
 
 	top := inputStyle.Render(inputBody)
 	leftPane := leftStyle.Render(resultsBody)

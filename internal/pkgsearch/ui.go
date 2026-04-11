@@ -1,15 +1,12 @@
-package main
+package pkgsearch
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-var stripTagsPattern = regexp.MustCompile(`<[^>]+>`)
-
-func renderResults(results []searchResult, width int, selectedIndex int) string {
+func RenderResults(results []Result, width int, selectedIndex int) string {
 	if len(results) == 0 {
 		return ""
 	}
@@ -42,7 +39,7 @@ func renderResults(results []searchResult, width int, selectedIndex int) string 
 	return strings.Join(lines, "\n")
 }
 
-func formatResultLine(result searchResult, width int) string {
+func formatResultLine(result Result, width int) string {
 	nameStyle := lipgloss.NewStyle().Bold(true)
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
@@ -56,23 +53,23 @@ func formatResultLine(result searchResult, width int) string {
 		if summaryWidth < 18 {
 			summaryWidth = 18
 		}
-		line += metaStyle.Render(" - " + truncateText(strings.TrimSpace(result.Description), summaryWidth))
+		line += metaStyle.Render(" - " + TruncateText(strings.TrimSpace(result.Description), summaryWidth))
 	}
 
 	if lipgloss.Width(line) > width {
-		line = truncateText(line, width)
+		line = TruncateText(line, width)
 	}
 	return line
 }
 
-func selectedSearchResult(results []searchResult, index int) *searchResult {
+func SelectedSearchResult(results []Result, index int) *Result {
 	if index < 0 || index >= len(results) {
 		return nil
 	}
 	return &results[index]
 }
 
-func renderPackageDetails(result *searchResult, width int, loading bool, query string, err error) string {
+func RenderPackageDetails(result *Result, width int, loading bool, query string, err error) string {
 	if width < 24 {
 		width = 24
 	}
@@ -88,7 +85,7 @@ func renderPackageDetails(result *searchResult, width int, loading bool, query s
 
 	if err != nil {
 		lines = append(lines, metaStyle.Render("Search error:"))
-		lines = append(lines, wrapText(err.Error(), width))
+		lines = append(lines, WrapText(err.Error(), width))
 		return strings.Join(lines, "\n")
 	}
 
@@ -105,21 +102,21 @@ func renderPackageDetails(result *searchResult, width int, loading bool, query s
 	lines = append(lines, valueStyle.Render(result.Name))
 	if result.Version != "" {
 		lines = append(lines, metaStyle.Render("Version"))
-		lines = append(lines, wrapText(result.Version, width))
+		lines = append(lines, WrapText(result.Version, width))
 	}
 	if result.Description != "" {
 		lines = append(lines, metaStyle.Render("Summary"))
-		lines = append(lines, wrapText(result.Description, width))
+		lines = append(lines, WrapText(result.Description, width))
 	}
 	if result.URL != "" {
 		lines = append(lines, metaStyle.Render("Project URL"))
-		lines = append(lines, wrapText(result.URL, width))
+		lines = append(lines, WrapText(result.URL, width))
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-func truncateText(text string, max int) string {
+func TruncateText(text string, max int) string {
 	if max <= 0 {
 		return ""
 	}
@@ -133,7 +130,7 @@ func truncateText(text string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-func wrapText(text string, width int) string {
+func WrapText(text string, width int) string {
 	if width < 1 {
 		width = 1
 	}
