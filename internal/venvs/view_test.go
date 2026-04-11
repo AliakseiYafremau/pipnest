@@ -39,8 +39,8 @@ func TestViewRendersInterpreterBox(t *testing.T) {
 }
 
 func TestInterpreterStylesDiffer(t *testing.T) {
-	global := StyleForInterpreter(InterpreterGlobal).Render("python")
-	venv := StyleForInterpreter(InterpreterVenv).Render("python")
+	global := StyleForInterpreter(InterpreterGlobal).GetForeground()
+	venv := StyleForInterpreter(InterpreterVenv).GetForeground()
 
 	if global == venv {
 		t.Fatal("expected global and venv styles to render differently")
