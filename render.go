@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"fmt"
+	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -251,11 +255,7 @@ func renderMainMenu(m model) string {
 	return strings.TrimRight(centered, "\n") + "\n" + legend
 }
 
-func renderResults(results []searchResult, width int, selectedIndex int) string {
-	if len(results) == 0 {
-		return ""
-	}
-
+func renderResults(results []searchResult, width int, selectedIndex int, scroll int, visibleRows int) string {
 	if width < 20 {
 		width = 20
 	}
@@ -268,20 +268,51 @@ func renderResults(results []searchResult, width int, selectedIndex int) string 
 	headerStyle := lipgloss.NewStyle().Bold(true)
 	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
+	if len(results) == 0 {
+		return strings.Join([]string{
+			headerStyle.Render("Packages"),
+			subtitleStyle.Render("← → focus  ↑↓ navigate"),
+			"",
+			"Type a package name and press Enter.",
+		}, "\n")
+	}
+
+	// clamp scroll so selected is visible
+	if selectedIndex < scroll {
+		scroll = selectedIndex
+	}
+	if selectedIndex >= scroll+visibleRows {
+		scroll = selectedIndex - visibleRows + 1
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+
+	contentWidth := width - 1 // 1 col for scrollbar
+	if contentWidth < 10 {
+		contentWidth = 10
+	}
+
 	var lines []string
 	lines = append(lines, headerStyle.Render("Packages"))
-	lines = append(lines, subtitleStyle.Render("Arrows or click to highlight"))
+	lines = append(lines, subtitleStyle.Render("← → focus  ↑↓ navigate"))
 	lines = append(lines, "")
 
-	for i, result := range results {
-		line := formatResultLine(result, width)
+	end := scroll + visibleRows
+	if end > len(results) {
+		end = len(results)
+	}
+	for i := scroll; i < end; i++ {
+		line := formatResultLine(results[i], contentWidth)
 		if i == selectedIndex {
 			line = selectedStyle.Render(line)
 		}
 		lines = append(lines, line)
 	}
 
-	return strings.Join(lines, "\n")
+	// attach scrollbar
+	scrollbar := renderScrollbar(len(results), scroll, visibleRows)
+	return attachScrollbar(strings.Join(lines, "\n"), scrollbar, 3, contentWidth)
 }
 
 func formatResultLine(result searchResult, width int) string {
@@ -314,9 +345,12 @@ func selectedSearchResult(results []searchResult, index int) *searchResult {
 	return &results[index]
 }
 
-func renderPackageDetails(result *searchResult, width int, loading bool, query string, err error) string {
+func renderPackageDetails(result *searchResult, width int, height int, scroll int, loading bool, query string, err error) (string, int) {
 	if width < 24 {
 		width = 24
+	}
+	if height < 4 {
+		height = 4
 	}
 
 	titleStyle := lipgloss.NewStyle().Bold(true)
@@ -331,17 +365,17 @@ func renderPackageDetails(result *searchResult, width int, loading bool, query s
 	if err != nil {
 		lines = append(lines, metaStyle.Render("Search error:"))
 		lines = append(lines, wrapText(err.Error(), width))
-		return strings.Join(lines, "\n")
+		return joinScrollableLines(lines, width, height, scroll)
 	}
 
 	if loading && result == nil {
 		lines = append(lines, metaStyle.Render("Loading results..."))
-		return strings.Join(lines, "\n")
+		return joinScrollableLines(lines, width, height, scroll)
 	}
 
 	if result == nil {
 		lines = append(lines, metaStyle.Render("Select a package on the left."))
-		return strings.Join(lines, "\n")
+		return joinScrollableLines(lines, width, height, scroll)
 	}
 
 	lines = append(lines, valueStyle.Render(result.Name))
@@ -353,12 +387,181 @@ func renderPackageDetails(result *searchResult, width int, loading bool, query s
 		lines = append(lines, metaStyle.Render("Summary"))
 		lines = append(lines, wrapText(result.Description, width))
 	}
+	if strings.TrimSpace(result.Readme) != "" {
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("README"))
+		lines = append(lines, renderMarkdownWithGlow(result.Readme, width))
+	}
 	if result.URL != "" {
+		lines = append(lines, "")
 		lines = append(lines, metaStyle.Render("Project URL"))
 		lines = append(lines, wrapText(result.URL, width))
 	}
 
-	return strings.Join(lines, "\n")
+	return joinScrollableLines(lines, width, height, scroll)
+}
+
+func joinScrollableLines(lines []string, width int, height int, scroll int) (string, int) {
+	flat := make([]string, 0, len(lines))
+	for _, line := range lines {
+		parts := strings.Split(line, "\n")
+		flat = append(flat, parts...)
+	}
+
+	maxScroll := 0
+	if len(flat) > height {
+		maxScroll = len(flat) - height
+	}
+	if scroll < 0 {
+		scroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+
+	visible := height
+	if visible < 1 {
+		visible = 1
+	}
+	start := scroll
+	end := start + visible
+	if end > len(flat) {
+		end = len(flat)
+	}
+	chunk := append([]string{}, flat[start:end]...)
+	for len(chunk) < visible {
+		chunk = append(chunk, "")
+	}
+
+	if maxScroll > 0 {
+		scrollbar := renderScrollbar(len(flat), scroll, visible)
+		contentWidth := width - 1
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
+		return attachScrollbar(strings.Join(chunk, "\n"), scrollbar, 0, contentWidth), maxScroll
+	}
+	return strings.Join(chunk, "\n"), 0
+}
+
+// renderScrollbar builds a vertical scrollbar string of `visibleRows` characters
+// representing position `scroll` within `total` items.
+func renderScrollbar(total, scroll, visibleRows int) string {
+	if total <= visibleRows || visibleRows < 1 {
+		return strings.Repeat(" ", visibleRows)
+	}
+	trackHeight := visibleRows
+	thumbHeight := trackHeight * visibleRows / total
+	if thumbHeight < 1 {
+		thumbHeight = 1
+	}
+	maxScroll := total - visibleRows
+	thumbPos := 0
+	if maxScroll > 0 {
+		thumbPos = scroll * (trackHeight - thumbHeight) / maxScroll
+	}
+
+	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	thumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+
+	var sb strings.Builder
+	for i := 0; i < trackHeight; i++ {
+		if i >= thumbPos && i < thumbPos+thumbHeight {
+			sb.WriteString(thumbStyle.Render("█"))
+		} else {
+			sb.WriteString(barStyle.Render("│"))
+		}
+		if i < trackHeight-1 {
+			sb.WriteByte('\n')
+		}
+	}
+	return sb.String()
+}
+
+// attachScrollbar overlays a 1-col scrollbar on the right side of rendered content.
+// headerRows is the number of lines at the top that should not get a scrollbar char.
+// contentWidth is the width of the content (scrollbar appended after).
+func attachScrollbar(content string, scrollbar string, headerRows int, contentWidth int) string {
+	contentLines := strings.Split(content, "\n")
+	barLines := strings.Split(scrollbar, "\n")
+
+	result := make([]string, len(contentLines))
+	barIdx := 0
+	for i, line := range contentLines {
+		if i < headerRows {
+			result[i] = line
+			continue
+		}
+		// pad/trim line to contentWidth
+		w := lipgloss.Width(line)
+		if w < contentWidth {
+			line = line + strings.Repeat(" ", contentWidth-w)
+		}
+		bar := " "
+		if barIdx < len(barLines) {
+			bar = barLines[barIdx]
+			barIdx++
+		}
+		result[i] = line + bar
+	}
+	return strings.Join(result, "\n")
+}
+
+func renderMarkdownWithGlow(markdown string, width int) string {
+	md := strings.TrimSpace(markdown)
+	if md == "" {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+
+	h := sha1.Sum([]byte(md))
+	cacheKey := fmt.Sprintf("%d:%x", width, h)
+	if cached, ok := glowRenderCache[cacheKey]; ok {
+		return cached
+	}
+
+	glowPath, err := exec.LookPath("glow")
+	if err != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+
+	cmd := exec.Command(glowPath, "-", "-w", strconv.Itoa(width))
+	cmd.Stdin = strings.NewReader(md)
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+
+	rendered := strings.TrimRight(out.String(), "\n")
+	if strings.TrimSpace(rendered) == "" {
+		rendered = wrapMarkdownFallback(md, width)
+	}
+	glowRenderCache[cacheKey] = rendered
+	return rendered
+}
+
+func wrapMarkdownFallback(markdown string, width int) string {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		if strings.TrimSpace(trimmed) == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, strings.Split(wrapText(trimmed, width), "\n")...)
+	}
+	return strings.Join(out, "\n")
 }
 
 func truncateText(text string, max int) string {
@@ -434,6 +637,16 @@ func renderPackagesScreen(m model) string {
 	}
 
 	// inputStyle: Width(N)+Border => N+2 cols. Para ocupar m.width exacto: N = m.width-2
+	focusColor := lipgloss.Color("4")
+	unfocusColor := lipgloss.Color("8")
+	leftBorderColor := unfocusColor
+	rightBorderColor := unfocusColor
+	if m.focusedPane == 0 {
+		leftBorderColor = focusColor
+	} else {
+		rightBorderColor = focusColor
+	}
+
 	inputStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Width(m.width - 2).
@@ -441,11 +654,13 @@ func renderPackagesScreen(m model) string {
 
 	leftStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		BorderForeground(leftBorderColor).
 		Width(leftPaneWidth).
 		Height(contentHeight - 2)
 
 	rightStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		BorderForeground(rightBorderColor).
 		Width(rightPaneWidth).
 		Height(contentHeight - 2)
 
@@ -459,17 +674,18 @@ func renderPackagesScreen(m model) string {
 		status = "Search error: " + m.err.Error()
 	}
 
-	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
-	resultsBody := renderResults(m.results, leftPaneWidth-4, m.selected)
-	if resultsBody == "" {
-		if m.loading {
-			resultsBody = "Loading results..."
-		} else {
-			resultsBody = "Type a package name and press Enter."
-		}
+	innerHeight := contentHeight - 4
+	if innerHeight < 4 {
+		innerHeight = 4
 	}
+
+	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
+	resultsBody := renderResults(m.results, leftPaneWidth-2, m.selected, m.listScroll, innerHeight)
 	selectedResult := selectedSearchResult(m.results, m.selected)
-	rightBody := renderPackageDetails(selectedResult, rightPaneWidth-4, m.loading, m.query, m.err)
+	rightBody, maxDetailScroll := renderPackageDetails(selectedResult, rightPaneWidth-4, innerHeight, m.detailScroll, m.loading, m.query, m.err)
+	if m.detailScroll > maxDetailScroll {
+		m.detailScroll = maxDetailScroll
+	}
 
 	top := inputStyle.Render(inputBody)
 	leftPane := leftStyle.Render(resultsBody)

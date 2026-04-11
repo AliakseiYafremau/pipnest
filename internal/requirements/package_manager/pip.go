@@ -6,13 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"time"
 )
 
 type PipManager struct {
-	Binary string
+	Binary     string
+	PythonPath string
 }
 
 func NewPipManager(binary string) *PipManager {
@@ -20,36 +26,57 @@ func NewPipManager(binary string) *PipManager {
 		binary = "pip"
 	}
 
-	return &PipManager{Binary: binary}
+	m := &PipManager{Binary: binary}
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
+
+	return m
 }
 
 func (m *PipManager) Install(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "install", pkgName)
-	return err
+	_, err := m.runPip(ctx, "install", pkgName)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
 func (m *PipManager) InstallFromFile(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("requirements file path cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "install", "-r", filePath)
-	return err
+	_, err := m.runPip(ctx, "install", "-r", filePath)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
 func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("output file path cannot be empty")
 	}
 
-	out, err := m.run(ctx, m.Binary, "freeze")
+	out, err := m.runPip(ctx, "freeze")
 	if err != nil {
 		return err
 	}
@@ -62,7 +89,9 @@ func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
 }
 
 func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
-	out, err := m.run(ctx, m.Binary, "list", "--format", "json")
+	m.refreshEnvironment()
+
+	out, err := m.runPip(ctx, "list", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -85,12 +114,14 @@ func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
 }
 
 func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, error) {
+	m.refreshEnvironment()
+
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("search query cannot be empty")
 	}
 
-	out, err := m.run(ctx, m.Binary, "index", "versions", query)
+	out, err := m.runPip(ctx, "index", "versions", query)
 	if err != nil {
 		return nil, err
 	}
@@ -119,21 +150,65 @@ func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, er
 }
 
 func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "uninstall", "-y", pkgName)
+	_, err := m.runPip(ctx, "uninstall", "-y", pkgName)
 	return err
 }
 
+func (m *PipManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
+	m.refreshEnvironment()
+
+	pkgName = strings.TrimSpace(pkgName)
+	if pkgName == "" {
+		return nil, errors.New("package name cannot be empty")
+	}
+
+	versions, err := fetchPyPIVersions(ctx, pkgName)
+	if err != nil {
+		return nil, err
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no versions found for %q", pkgName)
+	}
+
+	return versions, nil
+}
+
 func (m *PipManager) RunPython(ctx context.Context, code string) (string, error) {
+	m.refreshEnvironment()
+
 	if strings.TrimSpace(code) == "" {
 		return "", errors.New("python code cannot be empty")
 	}
 
+	if strings.TrimSpace(m.PythonPath) != "" {
+		return m.run(ctx, m.PythonPath, "-c", code)
+	}
+
 	return m.run(ctx, "python", "-c", code)
+}
+
+func (m *PipManager) runPip(ctx context.Context, args ...string) (string, error) {
+	if strings.TrimSpace(m.PythonPath) != "" {
+		pythonArgs := append([]string{"-m", "pip"}, args...)
+		cmd := append([]string{m.PythonPath}, pythonArgs...)
+		return m.run(ctx, cmd...)
+	}
+
+	cmd := append([]string{m.Binary}, args...)
+	return m.run(ctx, cmd...)
+}
+
+func (m *PipManager) refreshEnvironment() {
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
 }
 
 func (m *PipManager) run(ctx context.Context, args ...string) (string, error) {
@@ -155,4 +230,94 @@ func (m *PipManager) run(ctx context.Context, args ...string) (string, error) {
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+type pypiReleaseFile struct {
+	UploadTimeISO8601 string `json:"upload_time_iso_8601"`
+}
+
+type pypiReleaseResponse struct {
+	Releases map[string][]pypiReleaseFile `json:"releases"`
+}
+
+type versionRow struct {
+	Version   string
+	Uploaded  time.Time
+	HasUpload bool
+}
+
+func fetchPyPIVersions(ctx context.Context, pkgName string) ([]string, error) {
+	endpoint := fmt.Sprintf("https://pypi.org/pypi/%s/json", url.PathEscape(pkgName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "pipnest/1.0")
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("package %q not found on PyPI", pkgName)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("pypi request failed: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload pypiReleaseResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode pypi response: %w", err)
+	}
+
+	rows := make([]versionRow, 0, len(payload.Releases))
+	for version, files := range payload.Releases {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			continue
+		}
+
+		row := versionRow{Version: version}
+		for _, f := range files {
+			ts := strings.TrimSpace(f.UploadTimeISO8601)
+			if ts == "" {
+				continue
+			}
+			uploaded, parseErr := time.Parse(time.RFC3339Nano, ts)
+			if parseErr != nil {
+				continue
+			}
+			if !row.HasUpload || uploaded.After(row.Uploaded) {
+				row.Uploaded = uploaded
+				row.HasUpload = true
+			}
+		}
+
+		rows = append(rows, row)
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].HasUpload && rows[j].HasUpload && !rows[i].Uploaded.Equal(rows[j].Uploaded) {
+			return rows[i].Uploaded.After(rows[j].Uploaded)
+		}
+		if rows[i].HasUpload != rows[j].HasUpload {
+			return rows[i].HasUpload
+		}
+		return strings.Compare(rows[i].Version, rows[j].Version) > 0
+	})
+
+	versions := make([]string, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, row.Version)
+	}
+
+	return versions, nil
 }

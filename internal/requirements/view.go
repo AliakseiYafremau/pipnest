@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha1"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	packagemanager "pipnest/internal/requirements/package_manager"
 	"regexp"
 	"strings"
@@ -22,6 +25,16 @@ const (
 	logSuccess logKind = "success"
 	logError   logKind = "error"
 	logLoading logKind = "loading"
+)
+
+var (
+	reqMutedColor   = lipgloss.Color("8")
+	reqGlobalColor  = lipgloss.Color("6")
+	reqVenvColor    = lipgloss.Color("3")
+	reqTitleColor   = lipgloss.Color("5")
+	reqValueColor   = lipgloss.Color("4")
+	reqKeyColor     = lipgloss.Color("2")
+	reqVersionColor = lipgloss.Color("1")
 )
 
 type ViewModel struct {
@@ -45,9 +58,30 @@ type ViewModel struct {
 	ModalLastQuery          string
 	ModalErrorText          string
 	ModalLoading            bool
+	VersionModalOpen        bool
+	VersionsList            []string
+	VersionSelected         int
+	VersionScroll           int
+	VersionLoading          bool
+	VersionPackageName      string
+	VersionErrorText        string
+
+	ActionModalOpen    bool
+	ActionModalLoading bool
+	ActionModalTitle   string
+	ActionModalText    string
+	ActionModalKind    logKind
+	HelpModalOpen      bool
 
 	LogText string
 	LogKind logKind
+
+	SelectedMeta        *Result
+	SelectedMetaLoading bool
+	SelectedMetaErr     string
+	DetailsScroll       int
+	FocusedPane         int // 0 = list, 1 = details
+	metaCache           map[string]Result
 }
 
 type listLoadedMsg struct {
@@ -71,6 +105,29 @@ type installDoneMsg struct {
 	Err  error
 }
 
+type versionsDoneMsg struct {
+	Name     string
+	Versions []string
+	Err      error
+}
+
+type freezeDoneMsg struct {
+	FilePath  string
+	Err       error
+	ShowModal bool
+}
+
+type installFromFileDoneMsg struct {
+	FilePath string
+	Err      error
+}
+
+type packageMetaLoadedMsg struct {
+	Name string
+	Meta Result
+	Err  error
+}
+
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 var markdownImagePattern = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
 var glowRenderCache = map[string]string{}
@@ -80,11 +137,19 @@ func NewViewModel() ViewModel {
 	installInput := textinput.New()
 	installInput.Placeholder = "Type package name..."
 
+	pm := packagemanager.PackageManager(packagemanager.NewPipManager("pip"))
+	logText := "Loading installed packages... (pip)"
+	if _, err := exec.LookPath("uv"); err == nil {
+		pm = packagemanager.NewUVManager("uv")
+		logText = "Loading installed packages... (uv)"
+	}
+
 	return ViewModel{
-		PackageManager: packagemanager.NewUVManager("uv"),
+		PackageManager: pm,
 		InstallInput:   installInput,
-		LogText:        "Loading installed packages...",
+		LogText:        logText,
 		LogKind:        logLoading,
+		metaCache:      map[string]Result{},
 	}
 }
 
@@ -101,16 +166,34 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
 		return m, nil
 	case tea.KeyMsg:
+		if m.ModalOpen && m.VersionModalOpen {
+			return m.updateVersionModal(msg)
+		}
 		if m.ModalOpen {
 			return m.updateInstallModal(msg)
 		}
+		if m.ActionModalOpen {
+			return m.updateActionModal(msg)
+		}
+		if m.HelpModalOpen {
+			return m.updateHelpModal(msg)
+		}
 		return m.updateMainWindow(msg)
+	case tea.MouseMsg:
+		if m.ModalOpen || m.ActionModalOpen || m.HelpModalOpen {
+			return m, nil
+		}
+		return m.updateMainMouse(msg)
 	case listLoadedMsg:
 		m.LoadingList = false
 		if msg.Err != nil {
 			m.Packages = nil
 			m.Selected = 0
 			m.Scroll = 0
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = ""
+			m.SelectedMetaLoading = false
+			m.DetailsScroll = 0
 			m.setLog(logError, "Failed to load installed packages: "+msg.Err.Error())
 			return m, nil
 		}
@@ -119,6 +202,10 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		if len(m.Packages) == 0 {
 			m.Selected = 0
 			m.Scroll = 0
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = ""
+			m.SelectedMetaLoading = false
+			m.DetailsScroll = 0
 		} else {
 			if m.Selected >= len(m.Packages) {
 				m.Selected = len(m.Packages) - 1
@@ -129,17 +216,28 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 			m.ensureMainSelectionVisible(m.visibleMainRows())
 		}
 		m.setLog(logSuccess, fmt.Sprintf("Installed packages loaded: %d", len(m.Packages)))
+		if len(m.Packages) > 0 {
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
+		}
 		return m, nil
 	case uninstallDoneMsg:
 		m.BusyAction = false
 		if msg.Err != nil {
+			m.showActionModalResult(logError, "Uninstall failed", msg.Err.Error())
 			m.setLog(logError, "Uninstall failed: "+msg.Err.Error())
 			return m, nil
 		}
 
-		m.setLog(logSuccess, fmt.Sprintf("Uninstalled %s", msg.Name))
+		m.showActionModalResult(logSuccess, "Uninstall completed", "Removed: "+msg.Name)
+		m.setLog(logSuccess, fmt.Sprintf("Uninstalled %s (auto-freeze running)", msg.Name))
 		m.LoadingList = true
-		return m, m.loadInstalledCmd()
+		freezePath, freezeErr := requirementsOutputPath()
+		if freezeErr != nil {
+			m.setLog(logError, "Auto-freeze failed: "+freezeErr.Error())
+			return m, m.loadInstalledCmd()
+		}
+		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false))
 	case searchSuggestionsDoneMsg:
 		if strings.TrimSpace(msg.Query) != strings.TrimSpace(m.ModalLastQuery) {
 			return m, nil
@@ -164,15 +262,89 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.BusyAction = false
 		m.ModalLoading = false
 		if msg.Err != nil {
-			m.ModalErrorText = "Install failed: " + msg.Err.Error()
+			if m.VersionModalOpen {
+				m.VersionErrorText = "Install failed: " + msg.Err.Error()
+			} else {
+				m.ModalErrorText = "Install failed: " + msg.Err.Error()
+			}
 			m.setLog(logError, "Install failed: "+msg.Err.Error())
 			return m, nil
 		}
 
 		m.closeModal()
-		m.setLog(logSuccess, fmt.Sprintf("Installed %s", msg.Name))
+		m.setLog(logSuccess, fmt.Sprintf("Installed %s (auto-freeze running)", msg.Name))
+		m.LoadingList = true
+		freezePath, freezeErr := requirementsOutputPath()
+		if freezeErr != nil {
+			m.setLog(logError, "Auto-freeze failed: "+freezeErr.Error())
+			return m, m.loadInstalledCmd()
+		}
+		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false))
+	case versionsDoneMsg:
+		if !strings.EqualFold(strings.TrimSpace(msg.Name), strings.TrimSpace(m.VersionPackageName)) {
+			return m, nil
+		}
+
+		m.VersionLoading = false
+		if msg.Err != nil {
+			m.VersionsList = nil
+			m.VersionSelected = 0
+			m.VersionScroll = 0
+			m.VersionErrorText = "Failed to load versions: " + msg.Err.Error()
+			m.setLog(logError, m.VersionErrorText)
+			return m, nil
+		}
+
+		m.VersionsList = msg.Versions
+		m.VersionSelected = 0
+		m.VersionScroll = 0
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		m.VersionErrorText = ""
+		m.setLog(logInfo, fmt.Sprintf("Loaded %d versions for %s", len(msg.Versions), msg.Name))
+		return m, nil
+	case freezeDoneMsg:
+		m.BusyAction = false
+		if msg.Err != nil {
+			if msg.ShowModal {
+				m.showActionModalResult(logError, "Freeze failed", msg.Err.Error())
+			}
+			m.setLog(logError, "Freeze failed: "+msg.Err.Error())
+			return m, nil
+		}
+		if msg.ShowModal {
+			m.showActionModalResult(logSuccess, "Freeze completed", "Updated: "+msg.FilePath)
+		}
+		m.setLog(logSuccess, fmt.Sprintf("requirements.txt updated: %s", msg.FilePath))
+		return m, nil
+	case installFromFileDoneMsg:
+		m.BusyAction = false
+		if msg.Err != nil {
+			m.showActionModalResult(logError, "Install failed", msg.Err.Error())
+			m.setLog(logError, "Install from requirements failed: "+msg.Err.Error())
+			return m, nil
+		}
+		m.showActionModalResult(logSuccess, "Install completed", "Installed from: "+msg.FilePath)
+		m.setLog(logSuccess, fmt.Sprintf("Installed from %s", msg.FilePath))
 		m.LoadingList = true
 		return m, m.loadInstalledCmd()
+	case packageMetaLoadedMsg:
+		selectedName := m.selectedPackageName()
+		if msg.Name == "" || selectedName == "" || !strings.EqualFold(strings.TrimSpace(selectedName), strings.TrimSpace(msg.Name)) {
+			return m, nil
+		}
+
+		m.SelectedMetaLoading = false
+		if msg.Err != nil {
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = msg.Err.Error()
+			return m, nil
+		}
+
+		m.metaCache[strings.ToLower(strings.TrimSpace(msg.Name))] = msg.Meta
+		meta := msg.Meta
+		m.SelectedMeta = &meta
+		m.SelectedMetaErr = ""
+		return m, nil
 	}
 
 	return m, nil
@@ -180,16 +352,39 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 
 func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyLeft:
+		m.FocusedPane = 0
+		return m, nil
+	case tea.KeyRight:
+		m.FocusedPane = 1
+		return m, nil
 	case tea.KeyUp, tea.KeyCtrlP:
+		if m.FocusedPane == 1 {
+			m.DetailsScroll -= 3
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
+			}
+			return m, nil
+		}
 		if m.Selected > 0 {
 			m.Selected--
 			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
+		if m.FocusedPane == 1 {
+			m.DetailsScroll += 3
+			return m, nil
+		}
 		if m.Selected < len(m.Packages)-1 {
 			m.Selected++
 			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyPgUp:
@@ -202,7 +397,9 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.Selected = 0
 		}
 		m.ensureMainSelectionVisible(m.visibleMainRows())
-		return m, nil
+		m.DetailsScroll = 0
+		m, cmd := m.beginSelectedPackageMetaLoad()
+		return m, cmd
 	case tea.KeyPgDown:
 		step := m.visibleMainRows()
 		if step < 1 {
@@ -216,16 +413,51 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			}
 		}
 		m.ensureMainSelectionVisible(m.visibleMainRows())
-		return m, nil
+		m.DetailsScroll = 0
+		m, cmd := m.beginSelectedPackageMetaLoad()
+		return m, cmd
 	case tea.KeyRunes:
 		if len(msg.Runes) != 1 {
 			return m, nil
 		}
 
 		switch msg.Runes[0] {
+		case 'j', 'J':
+			if m.Selected < len(m.Packages)-1 {
+				m.Selected++
+				m.ensureMainSelectionVisible(m.visibleMainRows())
+				m.DetailsScroll = 0
+				m, cmd := m.beginSelectedPackageMetaLoad()
+				return m, cmd
+			}
+			return m, nil
+		case 'k', 'K':
+			if m.Selected > 0 {
+				m.Selected--
+				m.ensureMainSelectionVisible(m.visibleMainRows())
+				m.DetailsScroll = 0
+				m, cmd := m.beginSelectedPackageMetaLoad()
+				return m, cmd
+			}
+			return m, nil
+		case 'u':
+			m.DetailsScroll -= 4
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
+			}
+			return m, nil
+		case 'U':
+			m.DetailsScroll -= 12
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
+			}
+			return m, nil
 		case 'i', 'I':
 			m.openModal()
 			m.setLog(logInfo, "Install mode opened")
+			return m, nil
+		case '?':
+			m.openHelpModal()
 			return m, nil
 		case 'd', 'D':
 			if m.BusyAction || m.LoadingList {
@@ -242,22 +474,94 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			}
 
 			m.BusyAction = true
+			m.showActionModalLoading("Uninstall package", fmt.Sprintf("Uninstalling %s...", name))
 			m.setLog(logLoading, fmt.Sprintf("Uninstalling %s...", name))
 			return m, m.uninstallCmd(name)
-		case 'r', 'R':
+		case 'l', 'L':
 			if m.BusyAction {
 				return m, nil
 			}
 			m.LoadingList = true
 			m.setLog(logLoading, "Refreshing installed packages...")
 			return m, m.loadInstalledCmd()
+		case 'f', 'F':
+			if m.BusyAction || m.LoadingList {
+				return m, nil
+			}
+			freezePath, err := requirementsOutputPath()
+			if err != nil {
+				m.setLog(logError, "Freeze failed: "+err.Error())
+				return m, nil
+			}
+			m.BusyAction = true
+			m.showActionModalLoading("Freeze requirements", "Running pip freeze into requirements.txt...")
+			m.setLog(logLoading, "Running freeze to requirements.txt...")
+			return m, m.freezeCmd(freezePath, true)
+		case 'r', 'R':
+			if m.BusyAction || m.LoadingList {
+				return m, nil
+			}
+			reqFile, ok := findNearestRequirementsFile()
+			if !ok {
+				m.showActionModalResult(logInfo, "requirements.txt not found", "No requirements.txt found in this project tree")
+				m.setLog(logInfo, "No requirements.txt found in project")
+				return m, nil
+			}
+			m.BusyAction = true
+			m.showActionModalLoading("Install requirements", "Installing packages from requirements.txt...")
+			m.setLog(logLoading, "Installing from requirements.txt...")
+			return m, m.installFromFileCmd(reqFile)
 		}
 	}
 
 	return m, nil
 }
 
+func (m ViewModel) updateMainMouse(msg tea.MouseMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.MouseWheelUp:
+		m.DetailsScroll--
+		if m.DetailsScroll < 0 {
+			m.DetailsScroll = 0
+		}
+	case tea.MouseWheelDown:
+		m.DetailsScroll++
+	}
+
+	return m, nil
+}
+
 func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	if msg.Type == tea.KeyTab {
+		if m.BusyAction {
+			return m, nil
+		}
+
+		m.ModalErrorText = ""
+		pkgName := strings.TrimSpace(m.InstallInput.Value())
+		if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
+			candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
+			if candidate != "" {
+				pkgName = candidate
+			}
+		}
+
+		if pkgName == "" {
+			m.setLog(logInfo, "Type package name or select suggestion")
+			return m, nil
+		}
+
+		m.VersionModalOpen = true
+		m.VersionPackageName = pkgName
+		m.VersionLoading = true
+		m.VersionsList = nil
+		m.VersionSelected = 0
+		m.VersionScroll = 0
+		m.VersionErrorText = ""
+		m.setLog(logLoading, fmt.Sprintf("Loading versions for %s...", pkgName))
+		return m, m.versionsCmd(pkgName)
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.closeModal()
@@ -356,6 +660,139 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	return m, tea.Batch(inputCmd, searchCmd)
 }
 
+func (m ViewModel) updateVersionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.VersionModalOpen = false
+		m.VersionLoading = false
+		m.VersionErrorText = ""
+		m.setLog(logInfo, "Version picker closed")
+		return m, nil
+	case tea.KeyEnter:
+		if m.BusyAction || m.VersionLoading {
+			return m, nil
+		}
+		pkgName := strings.TrimSpace(m.VersionPackageName)
+		if pkgName == "" {
+			m.VersionErrorText = "Package name is empty"
+			return m, nil
+		}
+		if len(m.VersionsList) == 0 || m.VersionSelected < 0 || m.VersionSelected >= len(m.VersionsList) {
+			m.VersionErrorText = "No version selected"
+			return m, nil
+		}
+
+		selectedVersion := strings.TrimSpace(m.VersionsList[m.VersionSelected])
+		if selectedVersion == "" {
+			m.VersionErrorText = "No version selected"
+			return m, nil
+		}
+
+		installTarget := fmt.Sprintf("%s==%s", pkgName, selectedVersion)
+		m.BusyAction = true
+		m.ModalLoading = true
+		m.VersionErrorText = ""
+		m.setLog(logLoading, fmt.Sprintf("Installing %s...", installTarget))
+		return m, m.installCmd(installTarget)
+	case tea.KeyUp, tea.KeyCtrlP:
+		if m.VersionSelected > 0 {
+			m.VersionSelected--
+			m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		}
+		return m, nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		if m.VersionSelected < len(m.VersionsList)-1 {
+			m.VersionSelected++
+			m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		}
+		return m, nil
+	case tea.KeyPgUp:
+		step := m.visibleVersionRows()
+		if step < 1 {
+			step = 1
+		}
+		m.VersionSelected -= step
+		if m.VersionSelected < 0 {
+			m.VersionSelected = 0
+		}
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		return m, nil
+	case tea.KeyPgDown:
+		step := m.visibleVersionRows()
+		if step < 1 {
+			step = 1
+		}
+		m.VersionSelected += step
+		if m.VersionSelected >= len(m.VersionsList) {
+			m.VersionSelected = len(m.VersionsList) - 1
+			if m.VersionSelected < 0 {
+				m.VersionSelected = 0
+			}
+		}
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'k', 'K':
+				if m.VersionSelected > 0 {
+					m.VersionSelected--
+					m.ensureVersionSelectionVisible(m.visibleVersionRows())
+				}
+				return m, nil
+			case 'j', 'J':
+				if m.VersionSelected < len(m.VersionsList)-1 {
+					m.VersionSelected++
+					m.ensureVersionSelectionVisible(m.visibleVersionRows())
+				}
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
+}
+
+func (m ViewModel) updateActionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	if m.ActionModalLoading {
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyEnter:
+		m.closeActionModal()
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'q', 'Q':
+				m.closeActionModal()
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
+}
+
+func (m ViewModel) updateHelpModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyEnter:
+		m.closeHelpModal()
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case '?', 'q', 'Q':
+				m.closeHelpModal()
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
+}
+
 func (m ViewModel) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return ""
@@ -392,29 +829,55 @@ func (m ViewModel) View() string {
 		rightStyle = focusedPaneStyle.Width(rightWidth).Height(bodyHeight - 2)
 	}
 
-	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, bodyHeight-4))
-	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
+	listRows := bodyHeight - 6
+	if listRows < 3 {
+		listRows = 3
+	}
+
+	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, listRows))
+	if len(m.Packages) > listRows {
+		leftPane = overlayScrollbarOnBorder(leftPane, len(m.Packages), m.Scroll, listRows)
+	}
+
+	rightRows := bodyHeight - 4
+	if rightRows < 4 {
+		rightRows = 4
+	}
+	detailContent, detailTotal, detailScroll := m.renderPackageDetails(rightWidth-4, rightRows)
+	rightPane := rightStyle.Render(detailContent)
+	if detailTotal > rightRows {
+		rightPane = overlayScrollbarOnBorder(rightPane, detailTotal, detailScroll, rightRows)
+	}
+
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
 	baseMain := mainPanes
 	helpLine := m.renderBottomHelp()
-	if !m.ModalOpen {
+	if !m.ModalOpen && !m.ActionModalOpen && !m.HelpModalOpen {
 		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
-	modal := m.renderInstallModal()
-	plainModal := stripANSI(modal)
-	x := (m.Width - lipgloss.Width(plainModal)) / 2
-	if x < 0 {
-		x = 0
-	}
-	y := (m.Height - lipgloss.Height(plainModal)) / 2
-	if y < 0 {
-		y = 0
+	modalBase := stripANSI(baseMain)
+	if m.ModalOpen {
+		installModal := m.renderInstallModal()
+		installX, installY := centeredOverlayPosition(installModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, installModal, installX, installY)
+		if m.VersionModalOpen {
+			versionModal := m.renderVersionModal()
+			versionX, versionY := centeredOverlayPosition(versionModal, m.Width, m.Height)
+			modalBase = overlayAt(modalBase, versionModal, versionX, versionY)
+		}
+	} else if m.HelpModalOpen {
+		helpModal := m.renderHelpModal()
+		helpX, helpY := centeredOverlayPosition(helpModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, helpModal, helpX, helpY)
+	} else {
+		actionModal := m.renderActionModal()
+		actionX, actionY := centeredOverlayPosition(actionModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, actionModal, actionX, actionY)
 	}
 
-	overlaid := overlayAt(stripANSI(baseMain), modal, x, y)
-	return lipgloss.JoinVertical(lipgloss.Left, overlaid, helpLine)
+	return lipgloss.JoinVertical(lipgloss.Left, modalBase, helpLine)
 }
 
 func stripANSI(s string) string {
@@ -438,7 +901,7 @@ func overlayAt(base string, overlay string, x int, y int) string {
 			continue
 		}
 
-		baseRunes := []rune(baseLines[target])
+		baseRunes := []rune(stripANSI(baseLines[target]))
 		overlayVisibleRunes := []rune(stripANSI(line))
 		overlayWidth := len(overlayVisibleRunes)
 		if overlayWidth == 0 {
@@ -459,6 +922,20 @@ func overlayAt(base string, overlay string, x int, y int) string {
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+func centeredOverlayPosition(content string, width int, height int) (int, int) {
+	modalWidth := lipgloss.Width(stripANSI(content))
+	modalHeight := lipgloss.Height(stripANSI(content))
+	x := (width - modalWidth) / 2
+	if x < 0 {
+		x = 0
+	}
+	y := (height - modalHeight) / 2
+	if y < 0 {
+		y = 0
+	}
+	return x, y
 }
 
 func (m *ViewModel) openModal() {
@@ -483,6 +960,45 @@ func (m *ViewModel) closeModal() {
 	m.ModalLoadingSuggestions = false
 	m.ModalErrorText = ""
 	m.ModalLoading = false
+	m.VersionModalOpen = false
+	m.VersionsList = nil
+	m.VersionSelected = 0
+	m.VersionScroll = 0
+	m.VersionLoading = false
+	m.VersionPackageName = ""
+	m.VersionErrorText = ""
+}
+
+func (m *ViewModel) showActionModalLoading(title string, text string) {
+	m.ActionModalOpen = true
+	m.ActionModalLoading = true
+	m.ActionModalTitle = strings.TrimSpace(title)
+	m.ActionModalText = strings.TrimSpace(text)
+	m.ActionModalKind = logLoading
+}
+
+func (m *ViewModel) showActionModalResult(kind logKind, title string, text string) {
+	m.ActionModalOpen = true
+	m.ActionModalLoading = false
+	m.ActionModalTitle = strings.TrimSpace(title)
+	m.ActionModalText = strings.TrimSpace(text)
+	m.ActionModalKind = kind
+}
+
+func (m *ViewModel) closeActionModal() {
+	m.ActionModalOpen = false
+	m.ActionModalLoading = false
+	m.ActionModalTitle = ""
+	m.ActionModalText = ""
+	m.ActionModalKind = logInfo
+}
+
+func (m *ViewModel) openHelpModal() {
+	m.HelpModalOpen = true
+}
+
+func (m *ViewModel) closeHelpModal() {
+	m.HelpModalOpen = false
 }
 
 func (m *ViewModel) setLog(kind logKind, text string) {
@@ -533,6 +1049,117 @@ func (m ViewModel) installCmd(name string) tea.Cmd {
 	}
 }
 
+func (m ViewModel) freezeCmd(filePath string, showModal bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		err := m.PackageManager.Freeze(ctx, filePath)
+		return freezeDoneMsg{FilePath: filePath, Err: err, ShowModal: showModal}
+	}
+}
+
+func (m ViewModel) installFromFileCmd(filePath string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		err := m.PackageManager.InstallFromFile(ctx, filePath)
+		return installFromFileDoneMsg{FilePath: filePath, Err: err}
+	}
+}
+
+func (m ViewModel) versionsCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		versions, err := m.PackageManager.Versions(ctx, name)
+		return versionsDoneMsg{Name: name, Versions: versions, Err: err}
+	}
+}
+
+func (m ViewModel) beginSelectedPackageMetaLoad() (ViewModel, tea.Cmd) {
+	name := m.selectedPackageName()
+	if name == "" {
+		m.SelectedMeta = nil
+		m.SelectedMetaErr = ""
+		m.SelectedMetaLoading = false
+		return m, nil
+	}
+	cacheKey := strings.ToLower(strings.TrimSpace(name))
+	if cached, ok := m.metaCache[cacheKey]; ok {
+		meta := cached
+		m.SelectedMeta = &meta
+		m.SelectedMetaErr = ""
+		m.SelectedMetaLoading = false
+		return m, nil
+	}
+
+	m.SelectedMeta = nil
+	m.SelectedMetaErr = ""
+	m.SelectedMetaLoading = true
+
+	cmd := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		type metaRes struct {
+			meta Result
+			err  error
+		}
+		ch := make(chan metaRes, 1)
+		go func() {
+			meta, err := fetchPackageMetadata(name)
+			ch <- metaRes{meta: meta, err: err}
+		}()
+
+		select {
+		case <-ctx.Done():
+			return packageMetaLoadedMsg{Name: name, Err: ctx.Err()}
+		case res := <-ch:
+			return packageMetaLoadedMsg{Name: name, Meta: res.meta, Err: res.err}
+		}
+	}
+
+	return m, cmd
+}
+
+func (m ViewModel) selectedPackageName() string {
+	if len(m.Packages) == 0 || m.Selected < 0 || m.Selected >= len(m.Packages) {
+		return ""
+	}
+	return strings.TrimSpace(m.Packages[m.Selected].Name)
+}
+
+func requirementsOutputPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(wd, "requirements.txt"), nil
+}
+
+func findNearestRequirementsFile() (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil || wd == "" {
+		return "", false
+	}
+	current := wd
+	for {
+		candidate := filepath.Join(current, "requirements.txt")
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			return candidate, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", false
+}
+
 func (m *ViewModel) ensureMainSelectionVisible(visibleRows int) {
 	if visibleRows < 1 {
 		visibleRows = 1
@@ -577,6 +1204,28 @@ func (m *ViewModel) ensureSuggestionSelectionVisible(visibleRows int) {
 	}
 }
 
+func (m *ViewModel) ensureVersionSelectionVisible(visibleRows int) {
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	if m.VersionSelected < m.VersionScroll {
+		m.VersionScroll = m.VersionSelected
+	}
+	if m.VersionSelected >= m.VersionScroll+visibleRows {
+		m.VersionScroll = m.VersionSelected - visibleRows + 1
+	}
+	if m.VersionScroll < 0 {
+		m.VersionScroll = 0
+	}
+	maxScroll := len(m.VersionsList) - visibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.VersionScroll > maxScroll {
+		m.VersionScroll = maxScroll
+	}
+}
+
 func (m ViewModel) visibleMainRows() int {
 	rows := m.Height - 7
 	if rows < 4 {
@@ -588,6 +1237,15 @@ func (m ViewModel) visibleMainRows() int {
 func (m ViewModel) visibleSuggestionRows() int {
 	rows := int(float64(m.Height) * 0.7)
 	rows -= 7
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+func (m ViewModel) visibleVersionRows() int {
+	rows := int(float64(m.Height) * 0.45)
+	rows -= 9
 	if rows < 1 {
 		rows = 1
 	}
@@ -679,20 +1337,23 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m ViewModel) renderPackageDetails(width int) string {
+func (m ViewModel) renderPackageDetails(width int, rows int) (string, int, int) {
 	if width < 10 {
 		width = 10
 	}
+	if rows < 4 {
+		rows = 4
+	}
 
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")).Render("Package Details")
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Package Details")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	accent := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
 	if m.LoadingList {
-		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n"), 0, 0
 	}
 	if len(m.Packages) == 0 || m.Selected < 0 || m.Selected >= len(m.Packages) {
-		return strings.Join([]string{header, "", muted.Render("No package selected.")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("No package selected.")}, "\n"), 0, 0
 	}
 
 	dep := m.Packages[m.Selected]
@@ -705,7 +1366,7 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		header,
 		"",
 		accent.Render(dep.Name),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("Version"),
+		lipgloss.NewStyle().Foreground(reqKeyColor).Render("Version"),
 		WrapText(version, width),
 	}
 
@@ -854,12 +1515,12 @@ func (m ViewModel) renderInstallModal() string {
 	}
 	modalStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
+		BorderForeground(reqTitleColor).
 		Width(modalWidth).
 		Height(modalHeight)
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Render("Install Package")
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("Type to search")
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Install Package")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	subtitle := lipgloss.NewStyle().Foreground(reqGlobalColor).Render("Type to search")
 	innerHeight := modalHeight - 2
 	if innerHeight < 1 {
 		innerHeight = 1
@@ -881,12 +1542,12 @@ func (m ViewModel) renderInstallModal() string {
 		end = len(m.Suggestions)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("25"))
-	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
 	suggestionLines := make([]string, 0, rows)
 	if m.ModalLoadingSuggestions {
-		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Searching suggestions..."))
+		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(reqVenvColor).Render("Searching suggestions..."))
 	} else if len(m.Suggestions) == 0 {
 		suggestionLines = append(suggestionLines, muted.Render("No suggestions"))
 	} else {
@@ -902,16 +1563,23 @@ func (m ViewModel) renderInstallModal() string {
 	body := []string{header, inputStyle.Render(m.InstallInput.View()), subtitle}
 	body = append(body, suggestionLines...)
 
-	errorLine := ""
+	errorBlock := ""
+	errorLinesCount := 0
 	if m.ModalErrorText != "" {
-		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(TruncateText(m.ModalErrorText, modalWidth-8))
+		wrapped := WrapText(m.ModalErrorText, modalWidth-8)
+		errorBlock = lipgloss.NewStyle().Foreground(reqVersionColor).Render(wrapped)
+		errorLinesCount = len(strings.Split(wrapped, "\n"))
 	} else if m.ModalLoading {
-		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("Installing...")
+		errorBlock = lipgloss.NewStyle().Foreground(reqVenvColor).Render("Installing...")
+		errorLinesCount = 1
 	}
 
 	contentHeight := innerHeight
-	if errorLine != "" {
-		contentHeight = innerHeight - 1
+	if errorLinesCount > 0 {
+		contentHeight = innerHeight - errorLinesCount
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
 	}
 
 	if len(body) > contentHeight {
@@ -922,11 +1590,229 @@ func (m ViewModel) renderInstallModal() string {
 		}
 	}
 
-	if errorLine != "" {
-		body = append(body, errorLine)
+	if errorBlock != "" {
+		body = append(body, strings.Split(errorBlock, "\n")...)
 	}
 
 	return modalStyle.Render(strings.Join(body, "\n"))
+}
+
+func (m ViewModel) renderVersionModal() string {
+	modalWidth := int(float64(m.Width) * 0.45)
+	if modalWidth < 40 {
+		modalWidth = 40
+	}
+	if modalWidth > m.Width-2 {
+		modalWidth = m.Width - 2
+	}
+
+	modalHeight := int(float64(m.Height) * 0.45)
+	if modalHeight < 10 {
+		modalHeight = 10
+	}
+	if modalHeight > m.Height-2 {
+		modalHeight = m.Height - 2
+	}
+
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Width(modalWidth).
+		Height(modalHeight)
+
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Select Version")
+	packageLine := lipgloss.NewStyle().Foreground(reqGlobalColor).Render(TruncateText(strings.TrimSpace(m.VersionPackageName), modalWidth-8))
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	innerHeight := modalHeight - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	rows := m.visibleVersionRows()
+	start := m.VersionScroll
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(m.VersionsList) {
+		start = len(m.VersionsList) - 1
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + rows
+	if end > len(m.VersionsList) {
+		end = len(m.VersionsList)
+	}
+
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+
+	versionLines := make([]string, 0, rows)
+	if m.VersionLoading {
+		versionLines = append(versionLines, lipgloss.NewStyle().Foreground(reqVenvColor).Render("Loading versions..."))
+	} else if len(m.VersionsList) == 0 {
+		versionLines = append(versionLines, muted.Render("No versions found"))
+	} else {
+		for i := start; i < end; i++ {
+			line := TruncateText(m.VersionsList[i], modalWidth-8)
+			if i == m.VersionSelected {
+				line = selectedStyle.Render(line)
+			}
+			versionLines = append(versionLines, line)
+		}
+	}
+
+	body := []string{header, packageLine, ""}
+	body = append(body, versionLines...)
+
+	errorBlock := ""
+	errorLinesCount := 0
+	if m.VersionErrorText != "" {
+		wrapped := WrapText(m.VersionErrorText, modalWidth-8)
+		errorBlock = lipgloss.NewStyle().Foreground(reqVersionColor).Render(wrapped)
+		errorLinesCount = len(strings.Split(wrapped, "\n"))
+	} else if m.ModalLoading {
+		errorBlock = lipgloss.NewStyle().Foreground(reqVenvColor).Render("Installing selected version...")
+		errorLinesCount = 1
+	}
+
+	contentHeight := innerHeight
+	if errorLinesCount > 0 {
+		contentHeight = innerHeight - errorLinesCount
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+	}
+
+	if len(body) > contentHeight {
+		body = body[:contentHeight]
+	} else {
+		for len(body) < contentHeight {
+			body = append(body, "")
+		}
+	}
+
+	if errorBlock != "" {
+		body = append(body, strings.Split(errorBlock, "\n")...)
+	}
+
+	return modalStyle.Render(strings.Join(body, "\n"))
+}
+
+func (m ViewModel) renderActionModal() string {
+	modalWidth := int(float64(m.Width) * 0.62)
+	if modalWidth < 36 {
+		modalWidth = 36
+	}
+	if modalWidth > m.Width-2 {
+		modalWidth = m.Width - 2
+	}
+
+	modalHeight := 10
+	if modalHeight > m.Height-2 {
+		modalHeight = m.Height - 2
+	}
+	if modalHeight < 7 {
+		modalHeight = 7
+	}
+
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Width(modalWidth).
+		Height(modalHeight)
+
+	titleColor := reqGlobalColor
+	textColor := reqMutedColor
+	if m.ActionModalLoading {
+		titleColor = reqVenvColor
+		textColor = reqGlobalColor
+	} else {
+		switch m.ActionModalKind {
+		case logSuccess:
+			titleColor = reqKeyColor
+			textColor = reqGlobalColor
+		case logError:
+			titleColor = reqVersionColor
+			textColor = reqMutedColor
+		case logInfo:
+			titleColor = reqGlobalColor
+			textColor = reqMutedColor
+		}
+	}
+
+	title := strings.TrimSpace(m.ActionModalTitle)
+	if title == "" {
+		title = "Action"
+	}
+	message := strings.TrimSpace(m.ActionModalText)
+	if message == "" {
+		message = "Working..."
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Render(TruncateText(title, modalWidth-6))
+	body := lipgloss.NewStyle().Foreground(textColor).Render(WrapText(message, modalWidth-6))
+	footerText := "Esc/Enter close"
+	if m.ActionModalLoading {
+		footerText = "Working..."
+	}
+	footer := lipgloss.NewStyle().Foreground(reqMutedColor).Render(footerText)
+
+	lines := []string{header, "", body, "", footer}
+	innerHeight := modalHeight - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	if len(lines) > innerHeight {
+		lines = lines[:innerHeight]
+	} else {
+		for len(lines) < innerHeight {
+			lines = append(lines, "")
+		}
+	}
+
+	return modalStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m ViewModel) renderHelpModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Keybinds")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	key := lipgloss.NewStyle().Bold(true).Foreground(reqKeyColor)
+	detail := lipgloss.NewStyle().Foreground(reqValueColor)
+
+	rows := []string{
+		title,
+		muted.Render("Core"),
+		key.Render("i") + detail.Render("  install package"),
+		key.Render("Tab (install modal)") + detail.Render("  open versions list"),
+		key.Render("d") + detail.Render("  uninstall selected package"),
+		key.Render("j/k or ↑/↓") + detail.Render("  move in package list"),
+		key.Render("PgUp/PgDown") + detail.Render("  jump in package list"),
+		key.Render("Ctrl+U/Ctrl+D") + detail.Render("  scroll details/readme"),
+		key.Render("Esc") + detail.Render("  return to menu"),
+		key.Render("q") + detail.Render("  quit app"),
+		"",
+		muted.Render("Secondary"),
+		key.Render("f") + detail.Render("  freeze into requirements.txt"),
+		key.Render("r") + detail.Render("  install from nearest requirements.txt"),
+		key.Render("l") + detail.Render("  refresh installed packages"),
+		"",
+		muted.Render("Close help: Esc, Enter, ?, or q"),
+	}
+
+	modalWidth := min(max(56, m.Width-12), 90)
+	if modalWidth < 56 {
+		modalWidth = 56
+	}
+
+	modalHeight := min(max(10, len(rows)+2), max(10, m.Height-2))
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Padding(1, 2).
+		Width(modalWidth).
+		Height(modalHeight).
+		Render(strings.Join(rows, "\n"))
 }
 
 func (m ViewModel) renderLogLine() string {
@@ -937,17 +1823,17 @@ func (m ViewModel) renderLogLine() string {
 	}
 
 	prefix := "[INFO] "
-	color := lipgloss.Color("245")
+	color := reqMutedColor
 	switch m.LogKind {
 	case logSuccess:
 		prefix = "[OK] "
-		color = lipgloss.Color("42")
+		color = reqKeyColor
 	case logError:
 		prefix = "[ERR] "
-		color = lipgloss.Color("196")
+		color = reqVersionColor
 	case logLoading:
 		prefix = "[LOAD] "
-		color = lipgloss.Color("220")
+		color = reqVenvColor
 	}
 
 	line := lipgloss.NewStyle().Foreground(color).Render(prefix + text)
@@ -956,11 +1842,27 @@ func (m ViewModel) renderLogLine() string {
 }
 
 func (m ViewModel) renderBottomHelp() string {
-	help := "ESC back | Up/Down select | D uninstall | I open install"
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(reqKeyColor)
+	sepStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+
 	if m.ModalOpen {
+		if m.VersionModalOpen {
+			legend := lipgloss.JoinHorizontal(lipgloss.Top,
+				keyStyle.Render("Enter"), sepStyle.Render(": install selected version"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("j/k or PgUp/PgDown"), sepStyle.Render(": move"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("Esc"), sepStyle.Render(": back"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("q"), sepStyle.Render(": quit"),
+			)
+			return TruncateText(legend, m.Width)
+		}
+
 		legend := lipgloss.JoinHorizontal(lipgloss.Top,
 			keyStyle.Render("Enter"), sepStyle.Render(": install"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Tab"), sepStyle.Render(": versions"),
 			sepStyle.Render("  |  "),
 			keyStyle.Render("Esc"), sepStyle.Render(": close"),
 			sepStyle.Render("  |  "),
@@ -995,7 +1897,7 @@ func (m ViewModel) renderBottomHelp() string {
 		return TruncateText(legend, m.Width)
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top,
+	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		keyStyle.Render("i"), sepStyle.Render(": install"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("d"), sepStyle.Render(": uninstall"),
@@ -1006,4 +1908,11 @@ func (m ViewModel) renderBottomHelp() string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("q"), sepStyle.Render(": quit"),
 	)
+	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
+		lipgloss.NewStyle().Foreground(reqGlobalColor).Render("global"),
+		lipgloss.NewStyle().Render(" / "),
+		lipgloss.NewStyle().Foreground(reqVenvColor).Render("venv"),
+	)
+	spacer := lipgloss.NewStyle().Width(max(0, m.Width-lipgloss.Width(leftLegend)-lipgloss.Width(rightLegend))).Render("")
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer, rightLegend)
 }

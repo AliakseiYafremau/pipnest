@@ -35,14 +35,17 @@ type model struct {
 	requirements  requirements.ViewModel
 
 	// Packages screen
-	input    textinput.Model
-	width    int
-	height   int
-	query    string
-	results  []searchResult
-	selected int
-	loading  bool
-	err      error
+	input        textinput.Model
+	width        int
+	height       int
+	query        string
+	results      []searchResult
+	selected     int
+	listScroll   int
+	detailScroll int
+	focusedPane  int // 0 = list, 1 = detail
+	loading      bool
+	err          error
 
 	// Requirements screen
 	installedPackages []pm.Dependency
@@ -172,6 +175,8 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.Type {
+		case tea.KeyEsc:
+			return m, tea.Quit
 		case tea.KeyUp:
 			if m.menuCursor > 0 {
 				m.menuCursor--
@@ -241,18 +246,13 @@ func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
 	m.konamiIndex = 0
 
 	if m.currentScreen == ScreenRequirements {
-		var cmd tea.Cmd
-		m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		return m, cmd
+		var sizeCmd tea.Cmd
+		m.requirements, sizeCmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, tea.Batch(sizeCmd, m.requirements.Init())
 	}
 
 	if m.currentScreen == ScreenPackages {
 		m.input.Focus()
-	}
-	if m.currentScreen == ScreenRequirements {
-		m.reqLoading = true
-		m.reqErr = nil
-		return m, loadInstalledPackages(m.packageManager)
 	}
 	if m.currentScreen == ScreenCheatSheet {
 		m.cheatSearch.Focus()
@@ -314,15 +314,43 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.results) > 0 {
 			switch msg.Type {
+			case tea.KeyLeft:
+				m.focusedPane = 0
+				return m, nil
+			case tea.KeyRight:
+				m.focusedPane = 1
+				return m, nil
 			case tea.KeyUp, tea.KeyCtrlP:
-				if m.selected > 0 {
-					m.selected--
+				if m.focusedPane == 0 {
+					if m.selected > 0 {
+						m.selected--
+						m.detailScroll = 0
+					}
+				} else {
+					m.detailScroll -= 3
+					if m.detailScroll < 0 {
+						m.detailScroll = 0
+					}
 				}
 				return m, nil
 			case tea.KeyDown, tea.KeyCtrlN:
-				if m.selected < len(m.results)-1 {
-					m.selected++
+				if m.focusedPane == 0 {
+					if m.selected < len(m.results)-1 {
+						m.selected++
+						m.detailScroll = 0
+					}
+				} else {
+					m.detailScroll += 3
 				}
+				return m, nil
+			case tea.KeyCtrlU:
+				m.detailScroll -= 5
+				if m.detailScroll < 0 {
+					m.detailScroll = 0
+				}
+				return m, nil
+			case tea.KeyCtrlD:
+				m.detailScroll += 5
 				return m, nil
 			}
 		}
@@ -333,15 +361,30 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.results = nil
 				m.err = nil
 				m.loading = false
+				m.detailScroll = 0
 				return m, nil
 			}
 
 			m.query = query
 			m.loading = true
 			m.err = nil
+			m.detailScroll = 0
+			m.listScroll = 0
+			m.focusedPane = 0
 			return m, requirements.Search(query)
 		}
 	case tea.MouseMsg:
+		if msg.Type == tea.MouseWheelUp {
+			m.detailScroll--
+			if m.detailScroll < 0 {
+				m.detailScroll = 0
+			}
+			return m, nil
+		}
+		if msg.Type == tea.MouseWheelDown {
+			m.detailScroll++
+			return m, nil
+		}
 		if msg.Type == tea.MouseLeft && len(m.results) > 0 {
 			index := msg.Y - resultMouseStartLine
 			if index >= 0 && index < len(m.results)-m.listScroll {
@@ -356,12 +399,26 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			m.results = nil
 			m.selected = 0
+			m.detailScroll = 0
 			return m, nil
 		}
 
 		m.err = nil
 		m.results = msg.Results
 		m.selected = 0
+		m.listScroll = 0
+		m.detailScroll = 0
+		m.focusedPane = 0
+		cmds := make([]tea.Cmd, len(msg.Results))
+		for i, r := range msg.Results {
+			cmds[i] = requirements.FetchDescription(i, r.Name)
+		}
+		return m, tea.Batch(cmds...)
+
+	case requirements.DescriptionLoadedMsg:
+		if msg.Index >= 0 && msg.Index < len(m.results) {
+			m.results[msg.Index] = msg.Result
+		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -375,8 +432,17 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateRequirements: Lógica para pantalla de requirements
 func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyRunes {
+		if !m.requirements.ModalOpen && !m.requirements.ActionModalOpen && !m.requirements.HelpModalOpen {
+			runeKey := strings.ToLower(keyMsg.String())
+			if runeKey == "q" {
+				return m, tea.Quit
+			}
+		}
+	}
+
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEsc {
-		if m.requirements.ModalOpen {
+		if m.requirements.ModalOpen || m.requirements.ActionModalOpen || m.requirements.HelpModalOpen {
 			var cmd tea.Cmd
 			m.requirements, cmd = m.requirements.Update(msg)
 			return m, cmd
