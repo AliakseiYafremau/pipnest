@@ -14,6 +14,7 @@ type PackageManager interface {
 	List(ctx context.Context) ([]Dependency, error)                 // pip list
 	Search(ctx context.Context, query string) ([]Dependency, error) // pip search <query>
 	Remove(ctx context.Context, pkg_name string) error              // pip uninstall <pkg_name>
+	Versions(ctx context.Context, pkg_name string) ([]string, error)
 
 	RunPython(ctx context.Context, code string) (string, error) // python -c "<code>"
 }

@@ -159,6 +159,10 @@ func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
 	return err
 }
 
+func (m *UVManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
+	return NewPipManager("pip").Versions(ctx, pkgName)
+}
+
 // uv run python -c "<code>"
 func (m *UVManager) RunPython(ctx context.Context, code string) (string, error) {
 	if m.fallback != nil {

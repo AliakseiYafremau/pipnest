@@ -98,6 +98,10 @@ func (m *PoetryManager) Remove(ctx context.Context, pkgName string) error {
 	return err
 }
 
+func (m *PoetryManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
+	return NewPipManager("pip").Versions(ctx, pkgName)
+}
+
 func (m *PoetryManager) RunPython(ctx context.Context, code string) (string, error) {
 	if strings.TrimSpace(code) == "" {
 		return "", errors.New("python code cannot be empty")
