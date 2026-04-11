@@ -504,8 +504,8 @@ func renderEasterEgg(m model) string {
 	}
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	artStyle := lipgloss.NewStyle().Width(m.width - 4).Align(lipgloss.Center)
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("ESC to return to menu")
+	artStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Width(m.width - 4).Align(lipgloss.Center)
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("ESC to return to menu")
 
 	body := strings.TrimSpace(cheatsheet.Macarrones)
 	artBox := artStyle.Render(body)
