@@ -444,7 +444,7 @@ func renderCheatScreen(m model) string {
 	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
 
 	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
-	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
+	snekLines = strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
 	maxSnekLines := (contentHeight - len(detailLines)) - 2
 	panelInner := detailsWidth - 4
 
