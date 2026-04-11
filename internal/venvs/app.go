@@ -350,6 +350,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func preferredBaseInterpreters() []InterpreterOption {
 	all := globalInterpretersFromPath()
+	all = dedupeGlobalInterpreterChoices(all)
 	preferred := make([]InterpreterOption, 0, len(all))
 	for _, option := range all {
 		if isVenvLikeInterpreterPath(option.Path) {
@@ -361,6 +362,34 @@ func preferredBaseInterpreters() []InterpreterOption {
 		return preferred
 	}
 	return all
+}
+
+func dedupeGlobalInterpreterChoices(options []InterpreterOption) []InterpreterOption {
+	if len(options) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(options)*2)
+	deduped := make([]InterpreterOption, 0, len(options))
+	for _, option := range options {
+		if option.Path == "" {
+			continue
+		}
+		if _, exists := seen[option.Path]; exists {
+			continue
+		}
+		if canonical := canonicalPath(option.Path); canonical != "" {
+			dedupeKey := canonical + "\x00" + filepath.Base(option.Path)
+			if _, exists := seen[dedupeKey]; exists {
+				continue
+			}
+			seen[dedupeKey] = struct{}{}
+		}
+		seen[option.Path] = struct{}{}
+		deduped = append(deduped, option)
+	}
+
+	return deduped
 }
 
 func (m *Model) buildAddForm() *huh.Form {

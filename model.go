@@ -258,6 +258,9 @@ func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
 	if m.currentScreen == ScreenRequirements {
 		var sizeCmd tea.Cmd
 		m.requirements, sizeCmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		if len(m.requirements.Packages) > 0 && !m.requirements.LoadingList {
+			return m, sizeCmd
+		}
 		return m, tea.Batch(sizeCmd, m.requirements.Init())
 	}
 

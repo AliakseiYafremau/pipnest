@@ -252,7 +252,7 @@ func renderMainMenu(m model) string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
 		sepStyle.Render("  |  "),
-		keyStyle.Render("R/V/C"), sepStyle.Render(": quick open"),
+		keyStyle.Render("R/I/C"), sepStyle.Render(": quick open"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("click"), sepStyle.Render(": select"),
 		sepStyle.Render("  |  "),
@@ -672,11 +672,16 @@ func renderPackagesScreen(m model) string {
 	rightPaneWidth := m.width - 5 - leftPaneWidth
 
 	// inputStyle: Width(N)+Border => N+2 cols. Para ocupar m.width exacto: N = m.width-2
-	focusColor := lipgloss.Color("4")
-	unfocusColor := lipgloss.Color("8")
+	focusColor := lipgloss.Color("12")
+	unfocusColor := lipgloss.Color("7")
+	inputBorderColor := lipgloss.Color("7")
+	focusedPane := m.focusedPane
+	if focusedPane != 1 {
+		focusedPane = 0
+	}
 	leftBorderColor := unfocusColor
 	rightBorderColor := unfocusColor
-	if m.focusedPane == 0 {
+	if focusedPane == 0 {
 		leftBorderColor = focusColor
 	} else {
 		rightBorderColor = focusColor
@@ -684,6 +689,7 @@ func renderPackagesScreen(m model) string {
 
 	inputStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
+		BorderForeground(inputBorderColor).
 		Width(m.width - 2).
 		Height(inputHeight - 2)
 
