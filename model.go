@@ -185,43 +185,39 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyRight:
 			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
 		case tea.KeyEnter:
-			selectedItem := MainMenuItems[m.menuCursor]
-			m.currentScreen = selectedItem.Target
-			m.menuCursor = 0
-			m.konamiIndex = 0
-
-			if m.currentScreen == ScreenRequirements {
-				var cmd tea.Cmd
-				m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-				return m, cmd
-			}
-
-			if m.currentScreen == ScreenPackages {
-				m.input.Focus()
-			}
-			if m.currentScreen == ScreenRequirements {
-				// Cargar lista de paquetes
-				m.reqLoading = true
-				m.reqErr = nil
-				return m, loadInstalledPackages(m.packageManager)
-			}
-			if m.currentScreen == ScreenCheatSheet {
-				m.cheatSearch.Focus()
-				m.cheatSelected = 0
-				m.cheatScrollOffset = 0
-			}
-			if m.currentScreen == ScreenVenvs {
-				v := venvs.NewModel()
-				v.SetSize(m.width, m.height)
-				m.venvsApp = &v
-				return m, m.venvsApp.Init()
-			}
+			return m.activateMainMenuSelection()
 		case tea.KeyRunes:
-			if msg.String() == "q" {
+			runeKey := strings.ToLower(msg.String())
+			if runeKey == "q" {
 				return m, tea.Quit
+			}
+			if runeKey == "j" {
+				if m.menuCursor < len(MainMenuItems)-1 {
+					m.menuCursor++
+				}
+				m.konamiIndex = 0
+				return m, nil
+			}
+			if runeKey == "k" {
+				if m.menuCursor > 0 {
+					m.menuCursor--
+				}
+				m.konamiIndex = 0
+				return m, nil
+			}
+			if idx := findMainMenuIndexByInitial(runeKey); idx >= 0 {
+				m.menuCursor = idx
+				return m.activateMainMenuSelection()
 			}
 		default:
 			m.konamiIndex = 0
+		}
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseLeft {
+			if idx := mainMenuItemAtPosition(m, msg.X, msg.Y); idx >= 0 {
+				m.menuCursor = idx
+				return m.activateMainMenuSelection()
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -234,6 +230,75 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
+	selectedItem := MainMenuItems[m.menuCursor]
+	m.currentScreen = selectedItem.Target
+	m.menuCursor = 0
+	m.konamiIndex = 0
+
+	if m.currentScreen == ScreenRequirements {
+		var cmd tea.Cmd
+		m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, cmd
+	}
+
+	if m.currentScreen == ScreenPackages {
+		m.input.Focus()
+	}
+	if m.currentScreen == ScreenRequirements {
+		m.reqLoading = true
+		m.reqErr = nil
+		return m, loadInstalledPackages(m.packageManager)
+	}
+	if m.currentScreen == ScreenCheatSheet {
+		m.cheatSearch.Focus()
+		m.cheatSelected = 0
+		m.cheatScrollOffset = 0
+	}
+	if m.currentScreen == ScreenVenvs {
+		v := venvs.NewModel()
+		v.SetSize(m.width, m.height)
+		m.venvsApp = &v
+		return m, m.venvsApp.Init()
+	}
+
+	return m, nil
+}
+
+func findMainMenuIndexByInitial(input string) int {
+	if input == "" {
+		return -1
+	}
+	for i, item := range MainMenuItems {
+		label := strings.TrimSpace(strings.ToLower(item.Label))
+		if label == "" {
+			continue
+		}
+		if strings.HasPrefix(label, input) {
+			return i
+		}
+	}
+	return -1
+}
+
+func mainMenuItemAtPosition(m model, x, y int) int {
+	if m.width < mainMenuMinWidth || m.height < mainMenuMinHeight {
+		return -1
+	}
+	geom := computeMainMenuGeometry(m)
+	if x < geom.startX || x >= geom.startX+geom.menuWidth {
+		return -1
+	}
+	if y < geom.optionStartY || y >= geom.optionStartY+len(MainMenuItems) {
+		return -1
+	}
+	idx := y - geom.optionStartY
+	if idx < 0 || idx >= len(MainMenuItems) {
+		return -1
+	}
+	return idx
 }
 
 // updatePackages: Lógica de búsqueda de paquetes
