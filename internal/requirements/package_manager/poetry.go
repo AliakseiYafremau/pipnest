@@ -3,7 +3,6 @@ package requirements
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,15 +22,6 @@ func NewPoetryManager(binary string) *PoetryManager {
 	return &PoetryManager{Binary: binary}
 }
 
-func (m *PoetryManager) CreateVenv(ctx context.Context, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return errors.New("python interpreter or version cannot be empty")
-	}
-
-	_, err := m.run(ctx, "env", "use", name)
-	return err
-}
 
 func (m *PoetryManager) Install(ctx context.Context, pkgName string) error {
 	pkgName = strings.TrimSpace(pkgName)
@@ -191,16 +181,20 @@ type packageListEntry struct {
 
 func decodePackageListJSON(out string) ([]packageListEntry, error) {
 	var parsed []packageListEntry
-	if err := json.Unmarshal([]byte(out), &parsed); err == nil {
+	if err := jsonUnmarshal([]byte(out), &parsed); err == nil {
 		return parsed, nil
 	}
 
 	var wrapped struct {
 		Packages []packageListEntry `json:"packages"`
 	}
-	if err := json.Unmarshal([]byte(out), &wrapped); err == nil && len(wrapped.Packages) > 0 {
+	if err := jsonUnmarshal([]byte(out), &wrapped); err == nil && len(wrapped.Packages) > 0 {
 		return wrapped.Packages, nil
 	}
 
 	return nil, errors.New("not json")
+}
+
+func jsonUnmarshal(data []byte, v any) error {
+	return jsonUnmarshalImpl(data, v)
 }

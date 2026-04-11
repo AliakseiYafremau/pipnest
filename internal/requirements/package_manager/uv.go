@@ -23,17 +23,6 @@ func NewUVManager(binary string) *UVManager {
 	return &UVManager{Binary: binary}
 }
 
-// uv venv <name>
-func (m *UVManager) CreateVenv(ctx context.Context, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return errors.New("venv name cannot be empty")
-	}
-
-	_, err := m.run(ctx, "venv", name)
-	return err
-}
-
 
 // uv pip install <pkg_name>
 func (m *UVManager) Install(ctx context.Context, pkgName string) error {

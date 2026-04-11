@@ -9,7 +9,6 @@ type Dependency struct {
 
 
 type PackageManager interface {
-	CreateVenv(ctx context.Context, name string) error // pip venv <name>
 	Install(ctx context.Context, pkg_name string) error // pip install <pkg_name>
 	InstallFromFile(ctx context.Context, file_path string) error // pip install -r <file_path>
 	Freeze(ctx context.Context, file_path string) error // pip freeze > <file_path>

@@ -23,16 +23,6 @@ func NewPipManager(binary string) *PipManager {
 	return &PipManager{Binary: binary}
 }
 
-func (m *PipManager) CreateVenv(ctx context.Context, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return errors.New("venv name cannot be empty")
-	}
-
-	_, err := m.run(ctx, "python", "-m", "venv", name)
-	return err
-}
-
 func (m *PipManager) Install(ctx context.Context, pkgName string) error {
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
