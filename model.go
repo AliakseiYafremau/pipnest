@@ -1,20 +1,17 @@
 package main
 
 import (
-	"pipnest/internal/requirements"
 	"context"
+	"pipnest/internal/requirements"
 	"strings"
 
 	"pipnest/internal/cheatsheet"
-	"pipnest/internal/requirements"
 	pm "pipnest/internal/requirements/package_manager"
 	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-
-	"pipnest/internal/cheatsheet"
 )
 
 type searchResult = requirements.Result
@@ -472,11 +469,6 @@ func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	}
 	return m, nil
-func (m model) ActivationCommand() string {
-	if m.venvsApp != nil {
-		return m.venvsApp.ActivationCommand()
-	}
-	return ""
 }
 
 func (m model) ActivationMessage() string {
