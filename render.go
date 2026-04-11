@@ -310,18 +310,11 @@ func renderRequirementsScreen(m model) string {
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
-func renderVenvsScreen(_ model) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-	var lines []string
-	lines = append(lines, titleStyle.Render("🐍 Virtual Environments"))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("Coming soon..."))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("ESC to return to menu"))
-
-	return strings.Join(lines, "\n")
+func renderVenvsScreen(m model) string {
+	if m.venvsApp == nil {
+		return ""
+	}
+	return m.venvsApp.View()
 }
 
 func renderCheatScreen(m model) string {

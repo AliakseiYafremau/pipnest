@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"pipnest/internal/venvs"
+
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -16,7 +18,7 @@ func main() {
 	var program *tea.Program
 	switch *screen {
 	case "venvs":
-		program = tea.NewProgram(newVenvsModel(), tea.WithAltScreen())
+		program = tea.NewProgram(venvs.NewModel(), tea.WithAltScreen())
 	default:
 		program = tea.NewProgram(initialModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	}

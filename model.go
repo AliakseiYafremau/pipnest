@@ -5,6 +5,7 @@ import (
 
 	"pipnest/internal/cheatsheet"
 	"pipnest/internal/requirements"
+	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -36,6 +37,9 @@ type model struct {
 	cheatSelected     int
 	filteredCommands  []cheatsheet.CheatCommand
 	cheatScrollOffset int
+
+	// Venvs screen
+	venvsApp *venvs.Model
 }
 
 const (
@@ -70,6 +74,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle Ctrl+C globally
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
+	}
+
+	// Handle back navigation from venvs screen
+	if _, ok := msg.(venvs.BackMsg); ok {
+		m.currentScreen = ScreenMainMenu
+		return m, nil
+	}
+
+	// Always propagate window size to all sub-models
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = ws.Width
+		m.height = ws.Height
+		var cmd tea.Cmd
+		m.requirements, cmd = m.requirements.Update(ws)
+		if m.venvsApp != nil {
+			updated, _ := m.venvsApp.Update(ws)
+			if vm, ok := updated.(venvs.Model); ok {
+				m.venvsApp = &vm
+			}
+		}
+		_ = cmd
 	}
 
 	// Navegar según la pantalla actual
@@ -116,6 +141,11 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cheatSearch.Focus()
 				m.cheatSelected = 0
 				m.cheatScrollOffset = 0
+			}
+			if m.currentScreen == ScreenVenvs {
+				v := venvs.NewModel()
+				v.SetSize(m.width, m.height)
+				m.venvsApp = &v
 			}
 		case tea.KeyRunes:
 			if msg.String() == "q" {
@@ -218,16 +248,18 @@ func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // updateVenvs: Lógica para pantalla de venvs
 func (m model) updateVenvs(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.Type == tea.KeyEsc {
-			m.currentScreen = ScreenMainMenu
-		}
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+	if m.venvsApp == nil {
+		return m, nil
 	}
-	return m, nil
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = ws.Width
+		m.height = ws.Height
+	}
+	updated, cmd := m.venvsApp.Update(msg)
+	if vm, ok := updated.(venvs.Model); ok {
+		m.venvsApp = &vm
+	}
+	return m, cmd
 }
 
 // updateCheat: Lógica para pantalla de cheatsheet
@@ -337,6 +369,20 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m model) ActivationCommand() string {
+	if m.venvsApp != nil {
+		return m.venvsApp.ActivationCommand()
+	}
+	return ""
+}
+
+func (m model) ActivationMessage() string {
+	if m.venvsApp != nil {
+		return m.venvsApp.ActivationMessage()
+	}
+	return ""
 }
 
 func (m model) View() string {
