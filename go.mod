@@ -1,4 +1,4 @@
-module pytui
+module pipnest
 
 go 1.25
 
