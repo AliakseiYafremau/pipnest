@@ -297,14 +297,103 @@ func renderPackagesScreen(m model) string {
 
 // renderRequirementsScreen: Renderiza la pantalla de requirements
 func renderRequirementsScreen(m model) string {
-	body := m.requirements.View()
-	if body == "" {
+	if m.width == 0 {
 		return ""
 	}
 
-	footer := lipgloss.NewStyle().
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("33")).
+		MarginBottom(1)
+
+	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	selectedStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("230")).
+		Background(lipgloss.Color("57")).
+		Padding(0, 1)
+
+	var lines []string
+	lines = append(lines, titleStyle.Render("📋 Requirements Management"))
+	lines = append(lines, "")
+
+	// Mostrar estado de carga
+	if m.reqLoading {
+		lines = append(lines, metaStyle.Render("Loading packages..."))
+		return strings.Join(lines, "\n")
+	}
+
+	// Mostrar error si lo hay
+	if m.reqErr != nil {
+		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("Error: "+m.reqErr.Error()))
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("ESC to return to menu"))
+		return strings.Join(lines, "\n")
+	}
+
+	// Mostrar interfaz según modo
+	if m.reqMode == "install" {
+		lines = append(lines, titleStyle.Render("Install Package"))
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("Enter package name:"))
+		lines = append(lines, m.reqInput.View())
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("Enter to install | ESC to cancel"))
+		return strings.Join(lines, "\n")
+	}
+
+	// Modo "list" - mostrar paquetes instalados
+	lines = append(lines, metaStyle.Render(fmt.Sprintf("Installed packages: %d", len(m.installedPackages))))
+	lines = append(lines, "")
+
+	if len(m.installedPackages) == 0 {
+		lines = append(lines, metaStyle.Render("No packages installed"))
+		lines = append(lines, "")
+		lines = append(lines, metaStyle.Render("Press 'i' to install a package"))
+		lines = append(lines, metaStyle.Render("Press ESC to return to menu"))
+		return strings.Join(lines, "\n")
+	}
+
+	// Mostrar checkbox de paquetes
+	listStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Width(m.width - 4).
+		Height(m.height - 12).
+		Padding(1)
+
+	var pkgLines []string
+	pkgLines = append(pkgLines, metaStyle.Render("Packages (↑/↓ navigate | i: install | DEL: uninstall):"))
+	pkgLines = append(pkgLines, "")
+
+	startIdx := 0
+	visibleHeight := (m.height - 12) - 3
+	if m.selectedReqIdx >= startIdx+visibleHeight {
+		startIdx = m.selectedReqIdx - visibleHeight + 1
+	}
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	endIdx := startIdx + visibleHeight
+	if endIdx > len(m.installedPackages) {
+		endIdx = len(m.installedPackages)
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		pkg := m.installedPackages[i]
+		line := fmt.Sprintf("  %s %s", pkg.Name, metaStyle.Render("("+pkg.Version+")"))
+
+		if i == m.selectedReqIdx {
+			line = selectedStyle.Render("> " + pkg.Name + " " + pkg.Version)
+		}
+		pkgLines = append(pkgLines, line)
+	}
+
+	lines = append(lines, listStyle.Render(strings.Join(pkgLines, "\n")))
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
-		Render("ESC to return to menu")
+		Render("i: Install | DEL: Uninstall | ESC: Menu"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }

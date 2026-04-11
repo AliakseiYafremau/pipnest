@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"pipnest/internal/cheatsheet"
 	"pipnest/internal/requirements"
+	pm "pipnest/internal/requirements/package_manager"
 	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
@@ -15,6 +17,15 @@ import (
 type searchResult = requirements.Result
 
 type searchDoneMsg = requirements.DoneMsg
+
+type requirementsDoneMsg struct {
+	Packages []pm.Dependency
+	Err      error
+}
+
+type installPkgDoneMsg struct {
+	Err error
+}
 
 type model struct {
 	// Navigation
@@ -31,6 +42,15 @@ type model struct {
 	selected int
 	loading  bool
 	err      error
+
+	// Requirements screen
+	installedPackages []pm.Dependency
+	selectedReqIdx    int
+	reqLoading        bool
+	reqErr            error
+	reqInput          textinput.Model
+	packageManager    pm.PackageManager
+	reqMode           string // "list" o "install"
 
 	// Cheatsheet screen
 	cheatSearch       textinput.Model
@@ -54,6 +74,9 @@ func initialModel() model {
 	cheatInput := textinput.New()
 	cheatInput.Placeholder = "Search commands..."
 
+	reqInput := textinput.New()
+	reqInput.Placeholder = "Package name to install..."
+
 	return model{
 		currentScreen:     ScreenMainMenu,
 		menuCursor:        0,
@@ -63,6 +86,9 @@ func initialModel() model {
 		cheatSelected:     0,
 		filteredCommands:  cheatsheet.CheatCommands,
 		cheatScrollOffset: 0,
+		reqInput:          reqInput,
+		packageManager:    pm.NewPipManager(""),
+		reqMode:           "list",
 	}
 }
 
@@ -135,6 +161,10 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Focus()
 			}
 			if m.currentScreen == ScreenRequirements {
+				// Cargar lista de paquetes
+				m.reqLoading = true
+				m.reqErr = nil
+				return m, loadInstalledPackages(m.packageManager)
 				m.requirements.Input.Focus()
 			}
 			if m.currentScreen == ScreenCheatSheet {
@@ -234,14 +264,99 @@ func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyEsc {
 			m.currentScreen = ScreenMainMenu
+			m.reqErr = nil
+			m.reqLoading = false
+			m.installedPackages = nil
+			m.selectedReqIdx = 0
+			m.reqInput.Blur()
+			m.reqMode = "list"
 			return m, nil
 		}
+
+		if m.reqMode == "list" {
+			if len(m.installedPackages) > 0 {
+				switch msg.Type {
+				case tea.KeyUp:
+					if m.selectedReqIdx > 0 {
+						m.selectedReqIdx--
+					}
+					return m, nil
+				case tea.KeyDown:
+					if m.selectedReqIdx < len(m.installedPackages)-1 {
+						m.selectedReqIdx++
+					}
+					return m, nil
+				}
+			}
+
+			// Teclas para acciones
+			switch msg.Type {
+			case tea.KeyRunes:
+				if string(msg.Runes) == "i" {
+					// Entrar en modo instalar
+					m.reqMode = "install"
+					m.reqInput.Focus()
+					m.reqInput.SetValue("")
+					return m, nil
+				}
+			case tea.KeyDelete, tea.KeyBackspace:
+				// Desinstalar paquete seleccionado
+				if m.selectedReqIdx >= 0 && m.selectedReqIdx < len(m.installedPackages) {
+					pkg := m.installedPackages[m.selectedReqIdx]
+					m.reqLoading = true
+					m.reqErr = nil
+					return m, uninstallPackage(m.packageManager, pkg.Name)
+				}
+			}
+		} else if m.reqMode == "install" {
+			if msg.Type == tea.KeyEsc {
+				m.reqMode = "list"
+				m.reqInput.Blur()
+				m.reqInput.SetValue("")
+				return m, nil
+			}
+			if msg.Type == tea.KeyEnter {
+				pkgName := strings.TrimSpace(m.reqInput.Value())
+				if pkgName != "" {
+					m.reqMode = "list"
+					m.reqLoading = true
+					m.reqErr = nil
+					m.reqInput.Blur()
+					m.reqInput.SetValue("")
+					return m, installPackage(m.packageManager, pkgName)
+				}
+			}
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
+	case requirementsDoneMsg:
+		m.reqLoading = false
+		m.installedPackages = msg.Packages
+		m.reqErr = msg.Err
+		if msg.Err == nil && m.selectedReqIdx >= len(m.installedPackages) {
+			m.selectedReqIdx = len(m.installedPackages) - 1
+		}
+		if m.selectedReqIdx < 0 {
+			m.selectedReqIdx = 0
+		}
+		return m, nil
+
+	case installPkgDoneMsg:
+		m.reqLoading = true
+		if msg.Err != nil {
+			m.reqErr = msg.Err
+		}
+		// Recargar lista
+		return m, loadInstalledPackages(m.packageManager)
 	}
 
 	var cmd tea.Cmd
+	if m.reqMode == "install" {
+		m.reqInput, cmd = m.reqInput.Update(msg)
+	}
 	m.requirements, cmd = m.requirements.Update(msg)
 	return m, cmd
 }
@@ -399,4 +514,36 @@ func (m model) View() string {
 		return renderCheatScreen(m)
 	}
 	return ""
+}
+
+// Funciones asincrónicas para requirements
+
+func loadInstalledPackages(pkgMgr pm.PackageManager) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*1000*1000*1000) // 30s en nanosegundos
+		defer cancel()
+
+		packages, err := pkgMgr.List(ctx)
+		return requirementsDoneMsg{Packages: packages, Err: err}
+	}
+}
+
+func installPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
+		defer cancel()
+
+		err := pkgMgr.Install(ctx, pkgName)
+		return installPkgDoneMsg{Err: err}
+	}
+}
+
+func uninstallPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
+		defer cancel()
+
+		err := pkgMgr.Remove(ctx, pkgName)
+		return installPkgDoneMsg{Err: err}
+	}
 }
