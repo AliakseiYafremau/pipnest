@@ -217,6 +217,9 @@ func globalInterpretersFromPath() []InterpreterOption {
 			if !isExecutableFile(fullPath) {
 				continue
 			}
+			if isVenvLikeInterpreterPath(fullPath) {
+				continue
+			}
 
 			collected = append(collected, InterpreterOption{
 				Label: name,
@@ -291,25 +294,25 @@ func isVenvLikeInterpreterPath(path string) bool {
 		return false
 	}
 
-	resolved := canonicalPath(path)
-	if resolved == "" {
-		resolved = filepath.Clean(path)
+	candidates := []string{filepath.Clean(path)}
+	if resolved := canonicalPath(path); resolved != "" {
+		if resolved != candidates[0] {
+			candidates = append(candidates, resolved)
+		}
 	}
 
-	root := interpreterRoot(resolved)
-	if root == "" {
-		return false
-	}
+	for _, candidate := range candidates {
+		root := interpreterRoot(candidate)
+		if root != "" && fileExists(filepath.Join(root, "pyvenv.cfg")) {
+			return true
+		}
 
-	if fileExists(filepath.Join(root, "pyvenv.cfg")) {
-		return true
-	}
-
-	if virtualEnv := os.Getenv("VIRTUAL_ENV"); virtualEnv != "" && sameOrWithinPath(resolved, virtualEnv) {
-		return true
-	}
-	if condaPrefix := os.Getenv("CONDA_PREFIX"); condaPrefix != "" && sameOrWithinPath(resolved, condaPrefix) {
-		return true
+		if virtualEnv := os.Getenv("VIRTUAL_ENV"); virtualEnv != "" && sameOrWithinPath(candidate, virtualEnv) {
+			return true
+		}
+		if condaPrefix := os.Getenv("CONDA_PREFIX"); condaPrefix != "" && sameOrWithinPath(candidate, condaPrefix) {
+			return true
+		}
 	}
 
 	return false
