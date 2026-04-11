@@ -23,7 +23,6 @@ func NewUVManager(binary string) *UVManager {
 	return &UVManager{Binary: binary}
 }
 
-
 // uv pip install <pkg_name>
 func (m *UVManager) Install(ctx context.Context, pkgName string) error {
 	pkgName = strings.TrimSpace(pkgName)
@@ -89,9 +88,8 @@ func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
 	return parsePipTable(out), nil
 }
 
-// NOT IMPLEMENTED
 func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, error) {
-	return nil, errors.New("search is not supported by uv")
+	return SearchPackages(ctx, query)
 }
 
 // uv pip uninstall -y <pkgName>
@@ -134,7 +132,6 @@ func (m *UVManager) run(ctx context.Context, args ...string) (string, error) {
 
 	return strings.TrimSpace(stdout.String()), nil
 }
-
 
 // Function to parse pip list output
 func parsePipTable(out string) []Dependency {
