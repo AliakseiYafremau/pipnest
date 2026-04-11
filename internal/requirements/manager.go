@@ -7,9 +7,15 @@ type Dependency struct {
 	Version string
 }
 
-type Manager interface {
-	Load(ctx context.Context, path string) ([]Dependency, error)
-	Save(ctx context.Context, path string, dependencies []Dependency) error
-	Add(ctx context.Context, path string, dependency Dependency) error
-	Remove(ctx context.Context, path string, name string) error
+
+type PackageManager interface {
+	CreateVenv(ctx context.Context, name string) error // pip venv <name>
+	Install(ctx context.Context, pkg_name string) error // pip install <pkg_name>
+	InstallFromFile(ctx context.Context, file_path string) error // pip install -r <file_path>
+	Freeze(ctx context.Context, file_path string) error // pip freeze > <file_path>
+	List(ctx context.Context) ([]Dependency, error) // pip list
+	Search(ctx context.Context, query string) ([]Dependency, error) // pip search <query>
+	Remove(ctx context.Context, pkg_name string) error // pip uninstall <pkg_name>
+
+	RunPython(ctx context.Context, code string) (string, error) // python -c "<code>"
 }
