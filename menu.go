@@ -9,6 +9,7 @@ const (
 	ScreenPackages     ScreenID = "packages"
 	ScreenVenvs        ScreenID = "venvs"
 	ScreenCheatSheet   ScreenID = "cheatsheet"
+	ScreenEasterEgg    ScreenID = "easter-egg"
 )
 
 type MenuItem struct {
@@ -18,7 +19,6 @@ type MenuItem struct {
 
 var MainMenuItems = []MenuItem{
 	{Label: "Requirements", Target: ScreenRequirements},
-	{Label: "Packages", Target: ScreenPackages},
 	{Label: "Venvs", Target: ScreenVenvs},
 	{Label: "Cheatsheet", Target: ScreenCheatSheet},
 }

@@ -1,4 +1,3 @@
-// TO DELETE AFTER
 package requirements
 
 import (
@@ -45,6 +44,7 @@ var (
 	packageIndex       []packageNameEntry
 	packageIndexErr    error
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
+	indexCache         *IndexCache
 )
 
 func Search(query string) tea.Cmd {
@@ -101,7 +101,8 @@ func fetchResults(query string) ([]Result, error) {
 
 func loadPackageIndex() ([]packageNameEntry, error) {
 	packageIndexOnce.Do(func() {
-		packageIndex, packageIndexErr = fetchPackageIndex()
+		indexCache = NewIndexCache()
+		packageIndex, packageIndexErr = indexCache.LoadOrFetch()
 	})
 	return packageIndex, packageIndexErr
 }
@@ -192,6 +193,10 @@ func fetchPackageMetadata(name string) (Result, error) {
 	}, nil
 }
 
+func jsonUnmarshal(body []byte, target any) error {
+	return json.Unmarshal(body, target)
+}
+
 func normalizeQuery(text string) string {
 	text = strings.ToLower(text)
 	text = strings.ReplaceAll(text, "-", "")
@@ -260,4 +265,3 @@ func levenshteinDistance(a, b string) int {
 
 	return previous[len(b)]
 }
-
