@@ -18,7 +18,8 @@ func main() {
 	var program *tea.Program
 	switch *screen {
 	case "venvs":
-		program = tea.NewProgram(venvs.NewModel(), tea.WithAltScreen())
+		m := venvs.NewModel()
+		program = tea.NewProgram(&m, tea.WithAltScreen())
 	default:
 		program = tea.NewProgram(initialModel(), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	}
