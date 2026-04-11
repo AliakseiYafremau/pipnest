@@ -45,6 +45,7 @@ var (
 	packageIndex       []packageNameEntry
 	packageIndexErr    error
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
+	indexCache         *IndexCache
 )
 
 func Search(query string) tea.Cmd {
@@ -101,7 +102,8 @@ func fetchResults(query string) ([]Result, error) {
 
 func loadPackageIndex() ([]packageNameEntry, error) {
 	packageIndexOnce.Do(func() {
-		packageIndex, packageIndexErr = fetchPackageIndex()
+		indexCache = NewIndexCache()
+		packageIndex, packageIndexErr = indexCache.LoadOrFetch()
 	})
 	return packageIndex, packageIndexErr
 }
@@ -260,4 +262,3 @@ func levenshteinDistance(a, b string) int {
 
 	return previous[len(b)]
 }
-
