@@ -161,14 +161,10 @@ func ListInterpreters() []InterpreterOption {
 		if option.Path == "" {
 			return
 		}
-		key := canonicalPath(option.Path)
-		if key == "" {
-			key = option.Path
-		}
-		if _, exists := seen[key]; exists {
+		if _, exists := seen[option.Path]; exists {
 			return
 		}
-		seen[key] = struct{}{}
+		seen[option.Path] = struct{}{}
 		options = append(options, option)
 	}
 
@@ -187,9 +183,6 @@ func ListInterpreters() []InterpreterOption {
 	for _, option := range globalInterpretersFromPath() {
 		add(option)
 	}
-	for _, option := range globalInterpretersFromLookPath() {
-		add(option)
-	}
 
 	return options
 }
@@ -203,6 +196,9 @@ func globalInterpretersFromPath() []InterpreterOption {
 	collected := make([]InterpreterOption, 0, 8)
 	for _, dir := range filepath.SplitList(pathValue) {
 		if dir == "" {
+			continue
+		}
+		if isWslEnvironment() && strings.HasPrefix(filepath.ToSlash(filepath.Clean(dir)), "/mnt/") {
 			continue
 		}
 		entries, err := os.ReadDir(dir)
@@ -235,24 +231,6 @@ func globalInterpretersFromPath() []InterpreterOption {
 		return strings.ToLower(collected[i].Label) < strings.ToLower(collected[j].Label)
 	})
 
-	return collected
-}
-
-func globalInterpretersFromLookPath() []InterpreterOption {
-	candidates := []string{"python", "python3", "python3.13", "python3.12", "python3.11", "python3.10", "python3.9", "python3.8"}
-	collected := make([]InterpreterOption, 0, len(candidates))
-	for _, name := range candidates {
-		path, err := exec.LookPath(name)
-		if err != nil || path == "" {
-			continue
-		}
-		collected = append(collected, InterpreterOption{
-			Label: name,
-			Path:  path,
-			Root:  filepath.Dir(filepath.Dir(path)),
-			Kind:  InterpreterGlobal,
-		})
-	}
 	return collected
 }
 
@@ -302,6 +280,10 @@ func isExecutableFile(fullPath string) bool {
 		return strings.HasSuffix(lower, ".exe") || strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")
 	}
 	return info.Mode()&0o111 != 0
+}
+
+func isWslEnvironment() bool {
+	return os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSL_INTEROP") != ""
 }
 
 func isVenvLikeInterpreterPath(path string) bool {
