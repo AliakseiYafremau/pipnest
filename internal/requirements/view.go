@@ -250,6 +250,10 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 
 func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyEsc:
+		m.closeModal()
+		m.setLog(logInfo, "Install mode closed")
+		return m, nil
 	case tea.KeyUp, tea.KeyCtrlP:
 		if m.SuggestionSelected > 0 {
 			m.SuggestionSelected--
@@ -346,7 +350,8 @@ func (m ViewModel) View() string {
 	}
 
 	logHeight := 3
-	bodyHeight := m.Height - logHeight
+	helpHeight := 1
+	bodyHeight := m.Height - logHeight - helpHeight
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
@@ -370,11 +375,12 @@ func (m ViewModel) View() string {
 
 	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, bodyHeight-4))
 	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
-	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, lipgloss.NewStyle().Width(1).Render("│"), rightPane)
+	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
-	base := lipgloss.JoinVertical(lipgloss.Left, mainPanes, m.renderLogLine())
+	baseMain := lipgloss.JoinVertical(lipgloss.Left, mainPanes, m.renderLogLine())
+	helpLine := m.renderBottomHelp()
 	if !m.ModalOpen {
-		return base
+		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
 	modal := m.renderInstallModal()
@@ -388,7 +394,8 @@ func (m ViewModel) View() string {
 		y = 0
 	}
 
-	return overlayAt(stripANSI(base), plainModal, x, y)
+	overlaid := overlayAt(stripANSI(baseMain), plainModal, x, y)
+	return lipgloss.JoinVertical(lipgloss.Left, overlaid, helpLine)
 }
 
 func stripANSI(s string) string {
@@ -570,13 +577,12 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	}
 
 	header := lipgloss.NewStyle().Bold(true).Render("Installed Packages")
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Up/Down/PgUp/PgDn navigate, d uninstall, i install")
 
 	if m.LoadingList {
-		return strings.Join([]string{header, hint, "", "Loading installed packages..."}, "\n")
+		return strings.Join([]string{header, "", "Loading installed packages..."}, "\n")
 	}
 	if len(m.Packages) == 0 {
-		return strings.Join([]string{header, hint, "", "No installed packages found."}, "\n")
+		return strings.Join([]string{header, "", "No installed packages found."}, "\n")
 	}
 
 	start := m.Scroll
@@ -598,7 +604,7 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
-	lines := []string{header, hint, ""}
+	lines := []string{header, ""}
 	for i := start; i < end; i++ {
 		dep := m.Packages[i]
 		line := dep.Name
@@ -626,10 +632,10 @@ func (m ViewModel) renderPackageDetails(width int) string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
 
 	if m.LoadingList {
-		return strings.Join([]string{header, "", muted.Render("Loading..."), "", muted.Render("d uninstall  i install")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n")
 	}
 	if len(m.Packages) == 0 || m.Selected < 0 || m.Selected >= len(m.Packages) {
-		return strings.Join([]string{header, "", muted.Render("No package selected."), "", muted.Render("Press i to open install modal")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("No package selected.")}, "\n")
 	}
 
 	dep := m.Packages[m.Selected]
@@ -644,9 +650,6 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		accent.Render(dep.Name),
 		muted.Render("Version"),
 		WrapText(version, width),
-		"",
-		muted.Render("d uninstall selected package"),
-		muted.Render("i open install modal"),
 	}
 
 	return strings.Join(lines, "\n")
@@ -670,7 +673,12 @@ func (m ViewModel) renderInstallModal() string {
 	}
 	modalStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(modalWidth).Height(modalHeight)
 	header := lipgloss.NewStyle().Bold(true).Render("Install Package")
-	hint := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Type to search, Up/Down to select, i to install")
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	subtitle := muted.Render("Type to search")
+	innerHeight := modalHeight - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
 
 	rows := m.visibleSuggestionRows()
 	start := m.SuggestionScroll
@@ -689,7 +697,6 @@ func (m ViewModel) renderInstallModal() string {
 	}
 
 	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57"))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	suggestionLines := make([]string, 0, rows)
 	if m.ModalLoadingSuggestions {
@@ -706,8 +713,15 @@ func (m ViewModel) renderInstallModal() string {
 		}
 	}
 
-	body := []string{header, m.InstallInput.View(), hint}
+	body := []string{header, m.InstallInput.View(), subtitle}
 	body = append(body, suggestionLines...)
+	if len(body) > innerHeight {
+		body = body[:innerHeight]
+	} else {
+		for len(body) < innerHeight {
+			body = append(body, "")
+		}
+	}
 
 	return modalStyle.Render(strings.Join(body, "\n"))
 }
@@ -736,4 +750,15 @@ func (m ViewModel) renderLogLine() string {
 	line := lipgloss.NewStyle().Foreground(color).Render(prefix + text)
 	line = TruncateText(line, m.Width-6)
 	return style.Render(line)
+}
+
+func (m ViewModel) renderBottomHelp() string {
+	help := "ESC back | Up/Down select | D uninstall | I open install"
+	style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	if m.ModalOpen {
+		help = "ESC close modal | Up/Down select suggestion | I install selected/typed"
+		style = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	}
+
+	return style.Render(TruncateText(help, m.Width))
 }

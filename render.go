@@ -447,58 +447,58 @@ func renderCheatScreen(m model) string {
 	}
 
 	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
-snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-maxSnekLines := (contentHeight - len(detailLines)) - 2
-panelInner := detailsWidth - 4
+	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
+	maxSnekLines := (contentHeight - len(detailLines)) - 2
+	panelInner := detailsWidth - 4
 
-snekMaxWidth := 0
-for _, sl := range snekLines {
-    if w := lipgloss.Width(sl); w > snekMaxWidth {
-        snekMaxWidth = w
-    }
-}
+	snekMaxWidth := 0
+	for _, sl := range snekLines {
+		if w := lipgloss.Width(sl); w > snekMaxWidth {
+			snekMaxWidth = w
+		}
+	}
 
-if maxSnekLines > 0 && snekMaxWidth > 0 {
-    detailLines = append(detailLines, "")
-    for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
-        snekLine := snekLines[i]
-        lineWidth := lipgloss.Width(snekLine)
-        if lineWidth == 0 {
-            detailLines = append(detailLines, "")
-            continue
-        }
-        if lineWidth <= panelInner {
-            pad := (panelInner - lineWidth) / 2
-            snekLine = strings.Repeat(" ", pad) + snekLine
-        } else {
-            type cp struct {
-                r rune
-                x int
-            }
-            var chars []cp
-            col := 0
-            for _, r := range snekLine {
-                chars = append(chars, cp{r, col})
-                col++
-            }
-            scaledRunes := make([]rune, panelInner)
-            for j := range scaledRunes {
-                scaledRunes[j] = ' '
-            }
-            for _, c := range chars {
-                newX := 0
-                if snekMaxWidth > 1 {
-                    newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
-                }
-                if newX >= 0 && newX < panelInner {
-                    scaledRunes[newX] = c.r
-                }
-            }
-            snekLine = strings.TrimRight(string(scaledRunes), " ")
-        }
-        detailLines = append(detailLines, snekStyle.Render(snekLine))
-    }
-}
+	if maxSnekLines > 0 && snekMaxWidth > 0 {
+		detailLines = append(detailLines, "")
+		for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
+			snekLine := snekLines[i]
+			lineWidth := lipgloss.Width(snekLine)
+			if lineWidth == 0 {
+				detailLines = append(detailLines, "")
+				continue
+			}
+			if lineWidth <= panelInner {
+				pad := (panelInner - lineWidth) / 2
+				snekLine = strings.Repeat(" ", pad) + snekLine
+			} else {
+				type cp struct {
+					r rune
+					x int
+				}
+				var chars []cp
+				col := 0
+				for _, r := range snekLine {
+					chars = append(chars, cp{r, col})
+					col++
+				}
+				scaledRunes := make([]rune, panelInner)
+				for j := range scaledRunes {
+					scaledRunes[j] = ' '
+				}
+				for _, c := range chars {
+					newX := 0
+					if snekMaxWidth > 1 {
+						newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
+					}
+					if newX >= 0 && newX < panelInner {
+						scaledRunes[newX] = c.r
+					}
+				}
+				snekLine = strings.TrimRight(string(scaledRunes), " ")
+			}
+			detailLines = append(detailLines, snekStyle.Render(snekLine))
+		}
+	}
 
 	// Padding para rellenar la altura si es necesario
 	for len(detailLines) < contentHeight-1 {
