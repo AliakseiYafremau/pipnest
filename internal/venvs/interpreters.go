@@ -164,6 +164,20 @@ func ListInterpreters() []InterpreterOption {
 		if _, exists := seen[option.Path]; exists {
 			return
 		}
+		// For global interpreters, deduplicate entries with the same executable
+		// name that resolve to the same binary (e.g. /usr/bin/python and
+		// /bin/python). Different names like python, python3, python3.13 are
+		// kept even when they point to the same underlying file.
+		// Venvs share the underlying binary by design, so skip this for them.
+		if option.Kind == InterpreterGlobal {
+			if canonical := canonicalPath(option.Path); canonical != "" {
+				dedupeKey := canonical + "\x00" + filepath.Base(option.Path)
+				if _, exists := seen[dedupeKey]; exists {
+					return
+				}
+				seen[dedupeKey] = struct{}{}
+			}
+		}
 		seen[option.Path] = struct{}{}
 		options = append(options, option)
 	}
@@ -173,6 +187,7 @@ func ListInterpreters() []InterpreterOption {
 	for _, option := range loadRecentInterpreters() {
 		add(option)
 	}
+	addCentralizedVenvs(add)
 
 	if condaPrefix := os.Getenv("CONDA_PREFIX"); condaPrefix != "" {
 		name := filepath.Base(condaPrefix)
@@ -373,6 +388,83 @@ func canonicalPath(path string) string {
 		return absPath
 	}
 	return filepath.Clean(path)
+}
+
+func addCentralizedVenvs(add func(InterpreterOption)) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+
+	// Common tool-agnostic and tool-specific directories.
+	dirs := []string{
+		filepath.Join(home, ".virtualenvs"),                      // virtualenvwrapper
+		filepath.Join(home, ".venvs"),                            // manual convention
+		filepath.Join(home, ".local", "share", "virtualenvs"),    // pipenv (Linux/macOS)
+		filepath.Join(home, ".cache", "pypoetry", "virtualenvs"), // poetry (Linux)
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		dirs = append(dirs,
+			filepath.Join(home, "Library", "Caches", "pypoetry", "virtualenvs"), // poetry (macOS)
+		)
+	case "windows":
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			dirs = append(dirs, filepath.Join(appData, "pypoetry", "virtualenvs")) // poetry (Windows)
+		}
+		if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
+			dirs = append(dirs, filepath.Join(userProfile, ".virtualenvs")) // virtualenvwrapper (Windows)
+		}
+	}
+
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		collected := make([]InterpreterOption, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			root := filepath.Join(dir, entry.Name())
+			if option, ok := interpreterOptionFromRoot(root, entry.Name(), InterpreterVenv); ok {
+				collected = append(collected, option)
+			}
+		}
+		sort.Slice(collected, func(i, j int) bool {
+			return collected[i].Label < collected[j].Label
+		})
+		for _, option := range collected {
+			add(option)
+		}
+	}
+
+	// pyenv-virtualenv: ~/.pyenv/versions/* entries that have pyvenv.cfg are
+	// venvs. Those without it are bare global installs, already picked up via PATH.
+	pyenvVersions := filepath.Join(home, ".pyenv", "versions")
+	if entries, err := os.ReadDir(pyenvVersions); err == nil {
+		collected := make([]InterpreterOption, 0, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			root := filepath.Join(pyenvVersions, entry.Name())
+			if !fileExists(filepath.Join(root, "pyvenv.cfg")) {
+				continue
+			}
+			if option, ok := interpreterOptionFromRoot(root, entry.Name(), InterpreterVenv); ok {
+				collected = append(collected, option)
+			}
+		}
+		sort.Slice(collected, func(i, j int) bool {
+			return collected[i].Label < collected[j].Label
+		})
+		for _, option := range collected {
+			add(option)
+		}
+	}
 }
 
 func addLocalVenvs(add func(InterpreterOption)) {
