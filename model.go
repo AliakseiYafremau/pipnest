@@ -19,6 +19,7 @@ type model struct {
 	// Navigation
 	currentScreen ScreenID
 	menuCursor    int
+	requirements  requirements.ViewModel
 
 	// Packages screen
 	input    textinput.Model
@@ -52,6 +53,7 @@ func initialModel() model {
 	return model{
 		currentScreen:     ScreenMainMenu,
 		menuCursor:        0,
+		requirements:      requirements.NewViewModel(),
 		input:             ti,
 		cheatSearch:       cheatInput,
 		cheatSelected:     0,
@@ -106,6 +108,9 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.menuCursor = 0
 			if m.currentScreen == ScreenPackages {
 				m.input.Focus()
+			}
+			if m.currentScreen == ScreenRequirements {
+				m.requirements.Input.Focus()
 			}
 			if m.currentScreen == ScreenCheatSheet {
 				m.cheatSearch.Focus()
@@ -195,12 +200,16 @@ func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyEsc {
 			m.currentScreen = ScreenMainMenu
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	}
-	return m, nil
+
+	var cmd tea.Cmd
+	m.requirements, cmd = m.requirements.Update(msg)
+	return m, cmd
 }
 
 // updateVenvs: Lógica para pantalla de venvs

@@ -293,17 +293,16 @@ func renderPackagesScreen(m model) string {
 
 // renderRequirementsScreen: Renderiza la pantalla de requirements
 func renderRequirementsScreen(m model) string {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	body := m.requirements.View()
+	if body == "" {
+		return ""
+	}
 
-	var lines []string
-	lines = append(lines, titleStyle.Render("📋 Requirements"))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("Coming soon..."))
-	lines = append(lines, "")
-	lines = append(lines, subtitleStyle.Render("ESC to return to menu"))
+	footer := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Render("ESC to return to menu")
 
-	return strings.Join(lines, "\n")
+	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs

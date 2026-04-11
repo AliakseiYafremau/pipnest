@@ -207,8 +207,8 @@ func (m ViewModel) View() string {
 	}
 
 	top := inputStyle.Render(strings.Join([]string{m.Input.View(), status}, "\n"))
-	leftBody := m.renderPackageInfo(leftWidth - 4)
-	rightBody := m.renderPackageList(rightWidth-4, contentHeight-4)
+	leftBody := m.renderPackageList(leftWidth-4, contentHeight-4)
+	rightBody := m.renderPackageInfo(rightWidth - 4)
 
 	leftPane := leftStyle.Render(leftBody)
 	rightPane := rightStyle.Render(rightBody)
