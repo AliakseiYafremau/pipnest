@@ -12,7 +12,8 @@ import (
 )
 
 type PipManager struct {
-	Binary string
+	Binary     string
+	PythonPath string
 }
 
 func NewPipManager(binary string) *PipManager {
@@ -20,36 +21,57 @@ func NewPipManager(binary string) *PipManager {
 		binary = "pip"
 	}
 
-	return &PipManager{Binary: binary}
+	m := &PipManager{Binary: binary}
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
+
+	return m
 }
 
 func (m *PipManager) Install(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "install", pkgName)
-	return err
+	_, err := m.runPip(ctx, "install", pkgName)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
 func (m *PipManager) InstallFromFile(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("requirements file path cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "install", "-r", filePath)
-	return err
+	_, err := m.runPip(ctx, "install", "-r", filePath)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
 func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("output file path cannot be empty")
 	}
 
-	out, err := m.run(ctx, m.Binary, "freeze")
+	out, err := m.runPip(ctx, "freeze")
 	if err != nil {
 		return err
 	}
@@ -62,7 +84,9 @@ func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
 }
 
 func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
-	out, err := m.run(ctx, m.Binary, "list", "--format", "json")
+	m.refreshEnvironment()
+
+	out, err := m.runPip(ctx, "list", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -85,12 +109,14 @@ func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
 }
 
 func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, error) {
+	m.refreshEnvironment()
+
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("search query cannot be empty")
 	}
 
-	out, err := m.run(ctx, m.Binary, "index", "versions", query)
+	out, err := m.runPip(ctx, "index", "versions", query)
 	if err != nil {
 		return nil, err
 	}
@@ -119,21 +145,46 @@ func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, er
 }
 
 func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, m.Binary, "uninstall", "-y", pkgName)
+	_, err := m.runPip(ctx, "uninstall", "-y", pkgName)
 	return err
 }
 
 func (m *PipManager) RunPython(ctx context.Context, code string) (string, error) {
+	m.refreshEnvironment()
+
 	if strings.TrimSpace(code) == "" {
 		return "", errors.New("python code cannot be empty")
 	}
 
+	if strings.TrimSpace(m.PythonPath) != "" {
+		return m.run(ctx, m.PythonPath, "-c", code)
+	}
+
 	return m.run(ctx, "python", "-c", code)
+}
+
+func (m *PipManager) runPip(ctx context.Context, args ...string) (string, error) {
+	if strings.TrimSpace(m.PythonPath) != "" {
+		pythonArgs := append([]string{"-m", "pip"}, args...)
+		cmd := append([]string{m.PythonPath}, pythonArgs...)
+		return m.run(ctx, cmd...)
+	}
+
+	cmd := append([]string{m.Binary}, args...)
+	return m.run(ctx, cmd...)
+}
+
+func (m *PipManager) refreshEnvironment() {
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
 }
 
 func (m *PipManager) run(ctx context.Context, args ...string) (string, error) {

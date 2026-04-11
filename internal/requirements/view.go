@@ -744,16 +744,23 @@ func (m ViewModel) renderInstallModal() string {
 	body := []string{header, inputStyle.Render(m.InstallInput.View()), subtitle}
 	body = append(body, suggestionLines...)
 
-	errorLine := ""
+	errorBlock := ""
+	errorLinesCount := 0
 	if m.ModalErrorText != "" {
-		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(TruncateText(m.ModalErrorText, modalWidth-8))
+		wrapped := WrapText(m.ModalErrorText, modalWidth-8)
+		errorBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(wrapped)
+		errorLinesCount = len(strings.Split(wrapped, "\n"))
 	} else if m.ModalLoading {
-		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("Installing...")
+		errorBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("Installing...")
+		errorLinesCount = 1
 	}
 
 	contentHeight := innerHeight
-	if errorLine != "" {
-		contentHeight = innerHeight - 1
+	if errorLinesCount > 0 {
+		contentHeight = innerHeight - errorLinesCount
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
 	}
 
 	if len(body) > contentHeight {
@@ -764,8 +771,8 @@ func (m ViewModel) renderInstallModal() string {
 		}
 	}
 
-	if errorLine != "" {
-		body = append(body, errorLine)
+	if errorBlock != "" {
+		body = append(body, strings.Split(errorBlock, "\n")...)
 	}
 
 	return modalStyle.Render(strings.Join(body, "\n"))

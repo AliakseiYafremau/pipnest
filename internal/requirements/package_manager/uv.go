@@ -12,7 +12,8 @@ import (
 )
 
 type UVManager struct {
-	Binary string
+	Binary     string
+	PythonPath string
 }
 
 func NewUVManager(binary string) *UVManager {
@@ -20,40 +21,60 @@ func NewUVManager(binary string) *UVManager {
 		binary = "uv"
 	}
 
-	return &UVManager{Binary: binary}
+	m := &UVManager{Binary: binary}
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
+
+	return m
 }
 
-
-// uv pip install <pkg_name>
+// Install package into selected environment.
 func (m *UVManager) Install(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, "pip", "install", pkgName)
-	return err
+	_, err := m.runPip(ctx, "install", pkgName)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
-// uv pip install -r <file_path>
+// Install package set from requirements file into selected environment.
 func (m *UVManager) InstallFromFile(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("requirements file path cannot be empty")
 	}
 
-	_, err := m.run(ctx, "pip", "install", "-r", filePath)
-	return err
+	_, err := m.runPip(ctx, "install", "-r", filePath)
+	if err != nil {
+		return err
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
-// uv pip freeze > <file_path>
+// Freeze selected environment requirements into a file.
 func (m *UVManager) Freeze(ctx context.Context, filePath string) error {
+	m.refreshEnvironment()
+
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
 		return errors.New("output file path cannot be empty")
 	}
 
-	out, err := m.run(ctx, "pip", "freeze")
+	out, err := m.runPip(ctx, "freeze")
 	if err != nil {
 		return err
 	}
@@ -65,9 +86,11 @@ func (m *UVManager) Freeze(ctx context.Context, filePath string) error {
 	return nil
 }
 
-// uv pip list --format json
+// List installed packages in selected environment.
 func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
-	out, err := m.run(ctx, "pip", "list", "--format", "json")
+	m.refreshEnvironment()
+
+	out, err := m.runPip(ctx, "list", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -90,27 +113,65 @@ func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
 }
 
 func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, error) {
+	m.refreshEnvironment()
+
 	return SearchPackages(ctx, query)
 }
 
-// uv pip uninstall -y <pkgName>
+// Remove package from selected environment.
 func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
+	m.refreshEnvironment()
+
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
 		return errors.New("package name cannot be empty")
 	}
 
-	_, err := m.run(ctx, "pip", "uninstall", "-y", pkgName)
+	_, err := m.runPip(ctx, "uninstall", "-y", pkgName)
 	return err
 }
 
 // uv run python -c "<code>"
 func (m *UVManager) RunPython(ctx context.Context, code string) (string, error) {
+	m.refreshEnvironment()
+
 	if strings.TrimSpace(code) == "" {
 		return "", errors.New("python code cannot be empty")
 	}
 
-	return m.run(ctx, "run", "python", "-c", code)
+	args := []string{"run"}
+	if strings.TrimSpace(m.PythonPath) != "" {
+		args = append(args, "--python", strings.TrimSpace(m.PythonPath))
+	}
+	args = append(args, "python", "-c", code)
+	return m.run(ctx, args...)
+}
+
+func (m *UVManager) runPip(ctx context.Context, args ...string) (string, error) {
+	uvArgs := []string{"pip"}
+	if len(args) > 0 {
+		subcommand := args[0]
+		uvArgs = append(uvArgs, subcommand)
+		if strings.TrimSpace(m.PythonPath) != "" {
+			uvArgs = append(uvArgs, "--python", strings.TrimSpace(m.PythonPath))
+		}
+		if len(args) > 1 {
+			uvArgs = append(uvArgs, args[1:]...)
+		}
+		return m.run(ctx, uvArgs...)
+	}
+
+	if strings.TrimSpace(m.PythonPath) != "" {
+		uvArgs = append(uvArgs, "--python", strings.TrimSpace(m.PythonPath))
+	}
+
+	return m.run(ctx, uvArgs...)
+}
+
+func (m *UVManager) refreshEnvironment() {
+	if env, err := GetCurrentEnvironment(); err == nil {
+		m.PythonPath = strings.TrimSpace(env.InterpreterPath)
+	}
 }
 
 // Executes the given command
@@ -133,7 +194,6 @@ func (m *UVManager) run(ctx context.Context, args ...string) (string, error) {
 
 	return strings.TrimSpace(stdout.String()), nil
 }
-
 
 // Function to parse pip list output
 func parsePipTable(out string) []Dependency {
