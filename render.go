@@ -305,101 +305,12 @@ func renderRequirementsScreen(m model) string {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33")).
-		MarginBottom(1)
-
-	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("57")).
-		Padding(0, 1)
-
-	var lines []string
-	lines = append(lines, titleStyle.Render("📋 Requirements Management"))
-	lines = append(lines, "")
-
-	// Mostrar estado de carga
-	if m.reqLoading {
-		lines = append(lines, metaStyle.Render("Loading packages..."))
-		return strings.Join(lines, "\n")
+	body := m.requirements.View()
+	if body == "" {
+		return ""
 	}
 
-	// Mostrar error si lo hay
-	if m.reqErr != nil {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render("Error: "+m.reqErr.Error()))
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("ESC to return to menu"))
-		return strings.Join(lines, "\n")
-	}
-
-	// Mostrar interfaz según modo
-	if m.reqMode == "install" {
-		lines = append(lines, titleStyle.Render("Install Package"))
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Enter package name:"))
-		lines = append(lines, m.reqInput.View())
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Enter to install | ESC to cancel"))
-		return strings.Join(lines, "\n")
-	}
-
-	// Modo "list" - mostrar paquetes instalados
-	lines = append(lines, metaStyle.Render(fmt.Sprintf("Installed packages: %d", len(m.installedPackages))))
-	lines = append(lines, "")
-
-	if len(m.installedPackages) == 0 {
-		lines = append(lines, metaStyle.Render("No packages installed"))
-		lines = append(lines, "")
-		lines = append(lines, metaStyle.Render("Press 'i' to install a package"))
-		lines = append(lines, metaStyle.Render("Press ESC to return to menu"))
-		return strings.Join(lines, "\n")
-	}
-
-	// Mostrar checkbox de paquetes
-	listStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(m.width - 4).
-		Height(m.height - 12).
-		Padding(1)
-
-	var pkgLines []string
-	pkgLines = append(pkgLines, metaStyle.Render("Packages (↑/↓ navigate | i: install | DEL: uninstall):"))
-	pkgLines = append(pkgLines, "")
-
-	startIdx := 0
-	visibleHeight := (m.height - 12) - 3
-	if m.selectedReqIdx >= startIdx+visibleHeight {
-		startIdx = m.selectedReqIdx - visibleHeight + 1
-	}
-	if startIdx < 0 {
-		startIdx = 0
-	}
-
-	endIdx := startIdx + visibleHeight
-	if endIdx > len(m.installedPackages) {
-		endIdx = len(m.installedPackages)
-	}
-
-	for i := startIdx; i < endIdx; i++ {
-		pkg := m.installedPackages[i]
-		line := fmt.Sprintf("  %s %s", pkg.Name, metaStyle.Render("("+pkg.Version+")"))
-
-		if i == m.selectedReqIdx {
-			line = selectedStyle.Render("> " + pkg.Name + " " + pkg.Version)
-		}
-		pkgLines = append(pkgLines, line)
-	}
-
-	lines = append(lines, listStyle.Render(strings.Join(pkgLines, "\n")))
-	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render("i: Install | DEL: Uninstall | ESC: Menu"))
-
-	return lipgloss.JoinVertical(lipgloss.Left)
+	return body
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
@@ -536,58 +447,58 @@ func renderCheatScreen(m model) string {
 	}
 
 	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
-snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-maxSnekLines := (contentHeight - len(detailLines)) - 2
-panelInner := detailsWidth - 4
+	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
+	maxSnekLines := (contentHeight - len(detailLines)) - 2
+	panelInner := detailsWidth - 4
 
-snekMaxWidth := 0
-for _, sl := range snekLines {
-    if w := lipgloss.Width(sl); w > snekMaxWidth {
-        snekMaxWidth = w
-    }
-}
+	snekMaxWidth := 0
+	for _, sl := range snekLines {
+		if w := lipgloss.Width(sl); w > snekMaxWidth {
+			snekMaxWidth = w
+		}
+	}
 
-if maxSnekLines > 0 && snekMaxWidth > 0 {
-    detailLines = append(detailLines, "")
-    for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
-        snekLine := snekLines[i]
-        lineWidth := lipgloss.Width(snekLine)
-        if lineWidth == 0 {
-            detailLines = append(detailLines, "")
-            continue
-        }
-        if lineWidth <= panelInner {
-            pad := (panelInner - lineWidth) / 2
-            snekLine = strings.Repeat(" ", pad) + snekLine
-        } else {
-            type cp struct {
-                r rune
-                x int
-            }
-            var chars []cp
-            col := 0
-            for _, r := range snekLine {
-                chars = append(chars, cp{r, col})
-                col++
-            }
-            scaledRunes := make([]rune, panelInner)
-            for j := range scaledRunes {
-                scaledRunes[j] = ' '
-            }
-            for _, c := range chars {
-                newX := 0
-                if snekMaxWidth > 1 {
-                    newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
-                }
-                if newX >= 0 && newX < panelInner {
-                    scaledRunes[newX] = c.r
-                }
-            }
-            snekLine = strings.TrimRight(string(scaledRunes), " ")
-        }
-        detailLines = append(detailLines, snekStyle.Render(snekLine))
-    }
-}
+	if maxSnekLines > 0 && snekMaxWidth > 0 {
+		detailLines = append(detailLines, "")
+		for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
+			snekLine := snekLines[i]
+			lineWidth := lipgloss.Width(snekLine)
+			if lineWidth == 0 {
+				detailLines = append(detailLines, "")
+				continue
+			}
+			if lineWidth <= panelInner {
+				pad := (panelInner - lineWidth) / 2
+				snekLine = strings.Repeat(" ", pad) + snekLine
+			} else {
+				type cp struct {
+					r rune
+					x int
+				}
+				var chars []cp
+				col := 0
+				for _, r := range snekLine {
+					chars = append(chars, cp{r, col})
+					col++
+				}
+				scaledRunes := make([]rune, panelInner)
+				for j := range scaledRunes {
+					scaledRunes[j] = ' '
+				}
+				for _, c := range chars {
+					newX := 0
+					if snekMaxWidth > 1 {
+						newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
+					}
+					if newX >= 0 && newX < panelInner {
+						scaledRunes[newX] = c.r
+					}
+				}
+				snekLine = strings.TrimRight(string(scaledRunes), " ")
+			}
+			detailLines = append(detailLines, snekStyle.Render(snekLine))
+		}
+	}
 
 	// Padding para rellenar la altura si es necesario
 	for len(detailLines) < contentHeight-1 {
