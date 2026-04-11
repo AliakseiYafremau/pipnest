@@ -6,9 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"time"
 )
 
 type PipManager struct {
@@ -156,6 +161,25 @@ func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
 	return err
 }
 
+func (m *PipManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
+	m.refreshEnvironment()
+
+	pkgName = strings.TrimSpace(pkgName)
+	if pkgName == "" {
+		return nil, errors.New("package name cannot be empty")
+	}
+
+	versions, err := fetchPyPIVersions(ctx, pkgName)
+	if err != nil {
+		return nil, err
+	}
+	if len(versions) == 0 {
+		return nil, fmt.Errorf("no versions found for %q", pkgName)
+	}
+
+	return versions, nil
+}
+
 func (m *PipManager) RunPython(ctx context.Context, code string) (string, error) {
 	m.refreshEnvironment()
 
@@ -206,4 +230,94 @@ func (m *PipManager) run(ctx context.Context, args ...string) (string, error) {
 	}
 
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+type pypiReleaseFile struct {
+	UploadTimeISO8601 string `json:"upload_time_iso_8601"`
+}
+
+type pypiReleaseResponse struct {
+	Releases map[string][]pypiReleaseFile `json:"releases"`
+}
+
+type versionRow struct {
+	Version   string
+	Uploaded  time.Time
+	HasUpload bool
+}
+
+func fetchPyPIVersions(ctx context.Context, pkgName string) ([]string, error) {
+	endpoint := fmt.Sprintf("https://pypi.org/pypi/%s/json", url.PathEscape(pkgName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "pipnest/1.0")
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("package %q not found on PyPI", pkgName)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("pypi request failed: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload pypiReleaseResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("decode pypi response: %w", err)
+	}
+
+	rows := make([]versionRow, 0, len(payload.Releases))
+	for version, files := range payload.Releases {
+		version = strings.TrimSpace(version)
+		if version == "" {
+			continue
+		}
+
+		row := versionRow{Version: version}
+		for _, f := range files {
+			ts := strings.TrimSpace(f.UploadTimeISO8601)
+			if ts == "" {
+				continue
+			}
+			uploaded, parseErr := time.Parse(time.RFC3339Nano, ts)
+			if parseErr != nil {
+				continue
+			}
+			if !row.HasUpload || uploaded.After(row.Uploaded) {
+				row.Uploaded = uploaded
+				row.HasUpload = true
+			}
+		}
+
+		rows = append(rows, row)
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].HasUpload && rows[j].HasUpload && !rows[i].Uploaded.Equal(rows[j].Uploaded) {
+			return rows[i].Uploaded.After(rows[j].Uploaded)
+		}
+		if rows[i].HasUpload != rows[j].HasUpload {
+			return rows[i].HasUpload
+		}
+		return strings.Compare(rows[i].Version, rows[j].Version) > 0
+	})
+
+	versions := make([]string, 0, len(rows))
+	for _, row := range rows {
+		versions = append(versions, row.Version)
+	}
+
+	return versions, nil
 }

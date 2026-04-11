@@ -58,6 +58,13 @@ type ViewModel struct {
 	ModalLastQuery          string
 	ModalErrorText          string
 	ModalLoading            bool
+	VersionModalOpen        bool
+	VersionsList            []string
+	VersionSelected         int
+	VersionScroll           int
+	VersionLoading          bool
+	VersionPackageName      string
+	VersionErrorText        string
 
 	ActionModalOpen    bool
 	ActionModalLoading bool
@@ -96,6 +103,12 @@ type searchSuggestionsDoneMsg struct {
 type installDoneMsg struct {
 	Name string
 	Err  error
+}
+
+type versionsDoneMsg struct {
+	Name     string
+	Versions []string
+	Err      error
 }
 
 type freezeDoneMsg struct {
@@ -152,6 +165,9 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
 		return m, nil
 	case tea.KeyMsg:
+		if m.ModalOpen && m.VersionModalOpen {
+			return m.updateVersionModal(msg)
+		}
 		if m.ModalOpen {
 			return m.updateInstallModal(msg)
 		}
@@ -245,7 +261,11 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.BusyAction = false
 		m.ModalLoading = false
 		if msg.Err != nil {
-			m.ModalErrorText = "Install failed: " + msg.Err.Error()
+			if m.VersionModalOpen {
+				m.VersionErrorText = "Install failed: " + msg.Err.Error()
+			} else {
+				m.ModalErrorText = "Install failed: " + msg.Err.Error()
+			}
 			m.setLog(logError, "Install failed: "+msg.Err.Error())
 			return m, nil
 		}
@@ -259,6 +279,28 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 			return m, m.loadInstalledCmd()
 		}
 		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false))
+	case versionsDoneMsg:
+		if !strings.EqualFold(strings.TrimSpace(msg.Name), strings.TrimSpace(m.VersionPackageName)) {
+			return m, nil
+		}
+
+		m.VersionLoading = false
+		if msg.Err != nil {
+			m.VersionsList = nil
+			m.VersionSelected = 0
+			m.VersionScroll = 0
+			m.VersionErrorText = "Failed to load versions: " + msg.Err.Error()
+			m.setLog(logError, m.VersionErrorText)
+			return m, nil
+		}
+
+		m.VersionsList = msg.Versions
+		m.VersionSelected = 0
+		m.VersionScroll = 0
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		m.VersionErrorText = ""
+		m.setLog(logInfo, fmt.Sprintf("Loaded %d versions for %s", len(msg.Versions), msg.Name))
+		return m, nil
 	case freezeDoneMsg:
 		m.BusyAction = false
 		if msg.Err != nil {
@@ -489,6 +531,36 @@ func (m ViewModel) updateMainMouse(msg tea.MouseMsg) (ViewModel, tea.Cmd) {
 }
 
 func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	if msg.Type == tea.KeyTab {
+		if m.BusyAction {
+			return m, nil
+		}
+
+		m.ModalErrorText = ""
+		pkgName := strings.TrimSpace(m.InstallInput.Value())
+		if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
+			candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
+			if candidate != "" {
+				pkgName = candidate
+			}
+		}
+
+		if pkgName == "" {
+			m.setLog(logInfo, "Type package name or select suggestion")
+			return m, nil
+		}
+
+		m.VersionModalOpen = true
+		m.VersionPackageName = pkgName
+		m.VersionLoading = true
+		m.VersionsList = nil
+		m.VersionSelected = 0
+		m.VersionScroll = 0
+		m.VersionErrorText = ""
+		m.setLog(logLoading, fmt.Sprintf("Loading versions for %s...", pkgName))
+		return m, m.versionsCmd(pkgName)
+	}
+
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.closeModal()
@@ -585,6 +657,99 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		return m, searchCmd
 	}
 	return m, tea.Batch(inputCmd, searchCmd)
+}
+
+func (m ViewModel) updateVersionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.VersionModalOpen = false
+		m.VersionLoading = false
+		m.VersionErrorText = ""
+		m.setLog(logInfo, "Version picker closed")
+		return m, nil
+	case tea.KeyEnter:
+		if m.BusyAction || m.VersionLoading {
+			return m, nil
+		}
+		pkgName := strings.TrimSpace(m.VersionPackageName)
+		if pkgName == "" {
+			m.VersionErrorText = "Package name is empty"
+			return m, nil
+		}
+		if len(m.VersionsList) == 0 || m.VersionSelected < 0 || m.VersionSelected >= len(m.VersionsList) {
+			m.VersionErrorText = "No version selected"
+			return m, nil
+		}
+
+		selectedVersion := strings.TrimSpace(m.VersionsList[m.VersionSelected])
+		if selectedVersion == "" {
+			m.VersionErrorText = "No version selected"
+			return m, nil
+		}
+
+		installTarget := fmt.Sprintf("%s==%s", pkgName, selectedVersion)
+		m.BusyAction = true
+		m.ModalLoading = true
+		m.VersionErrorText = ""
+		m.setLog(logLoading, fmt.Sprintf("Installing %s...", installTarget))
+		return m, m.installCmd(installTarget)
+	case tea.KeyUp, tea.KeyCtrlP:
+		if m.VersionSelected > 0 {
+			m.VersionSelected--
+			m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		}
+		return m, nil
+	case tea.KeyDown, tea.KeyCtrlN:
+		if m.VersionSelected < len(m.VersionsList)-1 {
+			m.VersionSelected++
+			m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		}
+		return m, nil
+	case tea.KeyPgUp:
+		step := m.visibleVersionRows()
+		if step < 1 {
+			step = 1
+		}
+		m.VersionSelected -= step
+		if m.VersionSelected < 0 {
+			m.VersionSelected = 0
+		}
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		return m, nil
+	case tea.KeyPgDown:
+		step := m.visibleVersionRows()
+		if step < 1 {
+			step = 1
+		}
+		m.VersionSelected += step
+		if m.VersionSelected >= len(m.VersionsList) {
+			m.VersionSelected = len(m.VersionsList) - 1
+			if m.VersionSelected < 0 {
+				m.VersionSelected = 0
+			}
+		}
+		m.ensureVersionSelectionVisible(m.visibleVersionRows())
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'k', 'K':
+				if m.VersionSelected > 0 {
+					m.VersionSelected--
+					m.ensureVersionSelectionVisible(m.visibleVersionRows())
+				}
+				return m, nil
+			case 'j', 'J':
+				if m.VersionSelected < len(m.VersionsList)-1 {
+					m.VersionSelected++
+					m.ensureVersionSelectionVisible(m.visibleVersionRows())
+				}
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
 }
 
 func (m ViewModel) updateActionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
@@ -699,26 +864,27 @@ func (m ViewModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
-	modal := ""
+	modalBase := stripANSI(baseMain)
 	if m.ModalOpen {
-		modal = m.renderInstallModal()
+		installModal := m.renderInstallModal()
+		installX, installY := centeredOverlayPosition(installModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, installModal, installX, installY)
+		if m.VersionModalOpen {
+			versionModal := m.renderVersionModal()
+			versionX, versionY := centeredOverlayPosition(versionModal, m.Width, m.Height)
+			modalBase = overlayAt(modalBase, versionModal, versionX, versionY)
+		}
 	} else if m.HelpModalOpen {
-		modal = m.renderHelpModal()
+		helpModal := m.renderHelpModal()
+		helpX, helpY := centeredOverlayPosition(helpModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, helpModal, helpX, helpY)
 	} else {
-		modal = m.renderActionModal()
-	}
-	plainModal := stripANSI(modal)
-	x := (m.Width - lipgloss.Width(plainModal)) / 2
-	if x < 0 {
-		x = 0
-	}
-	y := (m.Height - lipgloss.Height(plainModal)) / 2
-	if y < 0 {
-		y = 0
+		actionModal := m.renderActionModal()
+		actionX, actionY := centeredOverlayPosition(actionModal, m.Width, m.Height)
+		modalBase = overlayAt(modalBase, actionModal, actionX, actionY)
 	}
 
-	overlaid := overlayAt(stripANSI(baseMain), modal, x, y)
-	return lipgloss.JoinVertical(lipgloss.Left, overlaid, helpLine)
+	return lipgloss.JoinVertical(lipgloss.Left, modalBase, helpLine)
 }
 
 func stripANSI(s string) string {
@@ -742,7 +908,7 @@ func overlayAt(base string, overlay string, x int, y int) string {
 			continue
 		}
 
-		baseRunes := []rune(baseLines[target])
+		baseRunes := []rune(stripANSI(baseLines[target]))
 		overlayVisibleRunes := []rune(stripANSI(line))
 		overlayWidth := len(overlayVisibleRunes)
 		if overlayWidth == 0 {
@@ -763,6 +929,20 @@ func overlayAt(base string, overlay string, x int, y int) string {
 	}
 
 	return strings.Join(baseLines, "\n")
+}
+
+func centeredOverlayPosition(content string, width int, height int) (int, int) {
+	modalWidth := lipgloss.Width(stripANSI(content))
+	modalHeight := lipgloss.Height(stripANSI(content))
+	x := (width - modalWidth) / 2
+	if x < 0 {
+		x = 0
+	}
+	y := (height - modalHeight) / 2
+	if y < 0 {
+		y = 0
+	}
+	return x, y
 }
 
 func (m *ViewModel) openModal() {
@@ -787,6 +967,13 @@ func (m *ViewModel) closeModal() {
 	m.ModalLoadingSuggestions = false
 	m.ModalErrorText = ""
 	m.ModalLoading = false
+	m.VersionModalOpen = false
+	m.VersionsList = nil
+	m.VersionSelected = 0
+	m.VersionScroll = 0
+	m.VersionLoading = false
+	m.VersionPackageName = ""
+	m.VersionErrorText = ""
 }
 
 func (m *ViewModel) showActionModalLoading(title string, text string) {
@@ -886,6 +1073,16 @@ func (m ViewModel) installFromFileCmd(filePath string) tea.Cmd {
 
 		err := m.PackageManager.InstallFromFile(ctx, filePath)
 		return installFromFileDoneMsg{FilePath: filePath, Err: err}
+	}
+}
+
+func (m ViewModel) versionsCmd(name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		versions, err := m.PackageManager.Versions(ctx, name)
+		return versionsDoneMsg{Name: name, Versions: versions, Err: err}
 	}
 }
 
@@ -1014,6 +1211,28 @@ func (m *ViewModel) ensureSuggestionSelectionVisible(visibleRows int) {
 	}
 }
 
+func (m *ViewModel) ensureVersionSelectionVisible(visibleRows int) {
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	if m.VersionSelected < m.VersionScroll {
+		m.VersionScroll = m.VersionSelected
+	}
+	if m.VersionSelected >= m.VersionScroll+visibleRows {
+		m.VersionScroll = m.VersionSelected - visibleRows + 1
+	}
+	if m.VersionScroll < 0 {
+		m.VersionScroll = 0
+	}
+	maxScroll := len(m.VersionsList) - visibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.VersionScroll > maxScroll {
+		m.VersionScroll = maxScroll
+	}
+}
+
 func (m ViewModel) visibleMainRows() int {
 	rows := m.Height - 8
 	if rows < 4 {
@@ -1025,6 +1244,15 @@ func (m ViewModel) visibleMainRows() int {
 func (m ViewModel) visibleSuggestionRows() int {
 	rows := int(float64(m.Height) * 0.7)
 	rows -= 7
+	if rows < 1 {
+		rows = 1
+	}
+	return rows
+}
+
+func (m ViewModel) visibleVersionRows() int {
+	rows := int(float64(m.Height) * 0.45)
+	rows -= 9
 	if rows < 1 {
 		rows = 1
 	}
@@ -1346,6 +1574,107 @@ func (m ViewModel) renderInstallModal() string {
 	return modalStyle.Render(strings.Join(body, "\n"))
 }
 
+func (m ViewModel) renderVersionModal() string {
+	modalWidth := int(float64(m.Width) * 0.45)
+	if modalWidth < 40 {
+		modalWidth = 40
+	}
+	if modalWidth > m.Width-2 {
+		modalWidth = m.Width - 2
+	}
+
+	modalHeight := int(float64(m.Height) * 0.45)
+	if modalHeight < 10 {
+		modalHeight = 10
+	}
+	if modalHeight > m.Height-2 {
+		modalHeight = m.Height - 2
+	}
+
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Width(modalWidth).
+		Height(modalHeight)
+
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Select Version")
+	packageLine := lipgloss.NewStyle().Foreground(reqGlobalColor).Render(TruncateText(strings.TrimSpace(m.VersionPackageName), modalWidth-8))
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	innerHeight := modalHeight - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	rows := m.visibleVersionRows()
+	start := m.VersionScroll
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(m.VersionsList) {
+		start = len(m.VersionsList) - 1
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + rows
+	if end > len(m.VersionsList) {
+		end = len(m.VersionsList)
+	}
+
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+
+	versionLines := make([]string, 0, rows)
+	if m.VersionLoading {
+		versionLines = append(versionLines, lipgloss.NewStyle().Foreground(reqVenvColor).Render("Loading versions..."))
+	} else if len(m.VersionsList) == 0 {
+		versionLines = append(versionLines, muted.Render("No versions found"))
+	} else {
+		for i := start; i < end; i++ {
+			line := TruncateText(m.VersionsList[i], modalWidth-8)
+			if i == m.VersionSelected {
+				line = selectedStyle.Render(line)
+			}
+			versionLines = append(versionLines, line)
+		}
+	}
+
+	body := []string{header, packageLine, ""}
+	body = append(body, versionLines...)
+
+	errorBlock := ""
+	errorLinesCount := 0
+	if m.VersionErrorText != "" {
+		wrapped := WrapText(m.VersionErrorText, modalWidth-8)
+		errorBlock = lipgloss.NewStyle().Foreground(reqVersionColor).Render(wrapped)
+		errorLinesCount = len(strings.Split(wrapped, "\n"))
+	} else if m.ModalLoading {
+		errorBlock = lipgloss.NewStyle().Foreground(reqVenvColor).Render("Installing selected version...")
+		errorLinesCount = 1
+	}
+
+	contentHeight := innerHeight
+	if errorLinesCount > 0 {
+		contentHeight = innerHeight - errorLinesCount
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+	}
+
+	if len(body) > contentHeight {
+		body = body[:contentHeight]
+	} else {
+		for len(body) < contentHeight {
+			body = append(body, "")
+		}
+	}
+
+	if errorBlock != "" {
+		body = append(body, strings.Split(errorBlock, "\n")...)
+	}
+
+	return modalStyle.Render(strings.Join(body, "\n"))
+}
+
 func (m ViewModel) renderActionModal() string {
 	modalWidth := int(float64(m.Width) * 0.62)
 	if modalWidth < 36 {
@@ -1431,6 +1760,7 @@ func (m ViewModel) renderHelpModal() string {
 		title,
 		muted.Render("Core"),
 		key.Render("i") + detail.Render("  install package"),
+		key.Render("Tab (install modal)") + detail.Render("  open versions list"),
 		key.Render("d") + detail.Render("  uninstall selected package"),
 		key.Render("j/k or ↑/↓") + detail.Render("  move in package list"),
 		key.Render("PgUp/PgDown") + detail.Render("  jump in package list"),
@@ -1493,8 +1823,23 @@ func (m ViewModel) renderBottomHelp() string {
 	sepStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	if m.ModalOpen {
+		if m.VersionModalOpen {
+			legend := lipgloss.JoinHorizontal(lipgloss.Top,
+				keyStyle.Render("Enter"), sepStyle.Render(": install selected version"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("j/k or PgUp/PgDown"), sepStyle.Render(": move"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("Esc"), sepStyle.Render(": back"),
+				sepStyle.Render("  |  "),
+				keyStyle.Render("q"), sepStyle.Render(": quit"),
+			)
+			return TruncateText(legend, m.Width)
+		}
+
 		legend := lipgloss.JoinHorizontal(lipgloss.Top,
 			keyStyle.Render("Enter"), sepStyle.Render(": install"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Tab"), sepStyle.Render(": versions"),
 			sepStyle.Render("  |  "),
 			keyStyle.Render("Esc"), sepStyle.Render(": close"),
 			sepStyle.Render("  |  "),
