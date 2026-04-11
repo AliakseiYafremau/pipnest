@@ -29,18 +29,17 @@ jobs:
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          BIN_NAME="pipnest"
-          OUT_DIR="dist/pipnest_linux_amd64"
-          mkdir -p "$OUT_DIR"
-          go build -trimpath -ldflags="-s -w" -o "$OUT_DIR/$BIN_NAME" .
+          go build -trimpath -ldflags="-s -w" -o "dist/pipnest" .
 
-      - name: Create archive (tar.gz)
+      - name: Create zip archive
         run: |
-          OUT_DIR="dist/pipnest_linux_amd64"
-          tar -C "$OUT_DIR" -czf "dist/pipnest_linux_amd64.tar.gz" .
+          cd dist
+          zip -r "pipnest_linux_amd64.zip" pipnest
 
       - name: Upload release assets
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/pipnest_linux_amd64.tar.gz
+          files: |
+            dist/pipnest
+            dist/pipnest_linux_amd64.zip
