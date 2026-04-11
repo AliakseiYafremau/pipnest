@@ -33,3 +33,6 @@ go.work.sum
 
 # Build
 pipnest
+
+# Requirements
+requirements.txt

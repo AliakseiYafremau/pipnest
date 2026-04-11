@@ -196,8 +196,7 @@ func (m *PipManager) RunPython(ctx context.Context, code string) (string, error)
 
 func (m *PipManager) runPip(ctx context.Context, args ...string) (string, error) {
 	if strings.TrimSpace(m.PythonPath) != "" {
-		pythonArgs := append([]string{"-m", "pip"}, args...)
-		cmd := append([]string{m.PythonPath}, pythonArgs...)
+		cmd := append([]string{m.Binary, "--python", strings.TrimSpace(m.PythonPath)}, args...)
 		return m.run(ctx, cmd...)
 	}
 
