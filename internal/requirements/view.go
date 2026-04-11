@@ -41,6 +41,8 @@ type ViewModel struct {
 	SuggestionScroll        int
 	ModalLoadingSuggestions bool
 	ModalLastQuery          string
+	ModalErrorText          string
+	ModalLoading            bool
 
 	LogText string
 	LogKind logKind
@@ -155,7 +157,9 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		return m, nil
 	case installDoneMsg:
 		m.BusyAction = false
+		m.ModalLoading = false
 		if msg.Err != nil {
+			m.ModalErrorText = "Install failed: " + msg.Err.Error()
 			m.setLog(logError, "Install failed: "+msg.Err.Error())
 			return m, nil
 		}
@@ -259,6 +263,7 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			return m, nil
 		}
 
+		m.ModalErrorText = ""
 		pkgName := strings.TrimSpace(m.InstallInput.Value())
 		if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
 			candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
@@ -273,6 +278,8 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		}
 
 		m.BusyAction = true
+		m.ModalLoading = true
+		m.ModalErrorText = ""
 		m.setLog(logLoading, fmt.Sprintf("Installing %s...", pkgName))
 		return m, m.installCmd(pkgName)
 	case tea.KeyUp, tea.KeyCtrlP:
@@ -330,11 +337,13 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		m.SuggestionScroll = 0
 		m.ModalLoadingSuggestions = false
 		m.ModalLastQuery = ""
+		m.ModalErrorText = ""
 		return m, inputCmd
 	}
 
 	m.ModalLastQuery = after
 	m.ModalLoadingSuggestions = true
+	m.ModalErrorText = ""
 	searchCmd := m.searchSuggestionsCmd(after)
 	if inputCmd == nil {
 		return m, searchCmd
@@ -347,9 +356,8 @@ func (m ViewModel) View() string {
 		return ""
 	}
 
-	logHeight := 3
 	helpHeight := 1
-	bodyHeight := m.Height - logHeight - helpHeight
+	bodyHeight := m.Height - helpHeight
 	if bodyHeight < 8 {
 		bodyHeight = 8
 	}
@@ -383,7 +391,7 @@ func (m ViewModel) View() string {
 	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
-	baseMain := lipgloss.JoinVertical(lipgloss.Left, mainPanes, m.renderLogLine())
+	baseMain := mainPanes
 	helpLine := m.renderBottomHelp()
 	if !m.ModalOpen {
 		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
@@ -468,6 +476,8 @@ func (m *ViewModel) closeModal() {
 	m.SuggestionScroll = 0
 	m.ModalLastQuery = ""
 	m.ModalLoadingSuggestions = false
+	m.ModalErrorText = ""
+	m.ModalLoading = false
 }
 
 func (m *ViewModel) setLog(kind logKind, text string) {
@@ -733,12 +743,29 @@ func (m ViewModel) renderInstallModal() string {
 
 	body := []string{header, inputStyle.Render(m.InstallInput.View()), subtitle}
 	body = append(body, suggestionLines...)
-	if len(body) > innerHeight {
-		body = body[:innerHeight]
+
+	errorLine := ""
+	if m.ModalErrorText != "" {
+		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(TruncateText(m.ModalErrorText, modalWidth-8))
+	} else if m.ModalLoading {
+		errorLine = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("Installing...")
+	}
+
+	contentHeight := innerHeight
+	if errorLine != "" {
+		contentHeight = innerHeight - 1
+	}
+
+	if len(body) > contentHeight {
+		body = body[:contentHeight]
 	} else {
-		for len(body) < innerHeight {
+		for len(body) < contentHeight {
 			body = append(body, "")
 		}
+	}
+
+	if errorLine != "" {
+		body = append(body, errorLine)
 	}
 
 	return modalStyle.Render(strings.Join(body, "\n"))
