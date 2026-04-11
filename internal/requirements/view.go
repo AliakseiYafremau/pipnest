@@ -64,6 +64,9 @@ type ViewModel struct {
 	ModalLastQuery          string
 	ModalErrorText          string
 	ModalLoading            bool
+	InstallMeta             *Result
+	InstallMetaLoading      bool
+	InstallMetaErr          string
 	ManagerModalOpen        bool
 	ManagerOptions          []managerOption
 	ManagerSelected         int
@@ -133,6 +136,12 @@ type installFromFileDoneMsg struct {
 }
 
 type packageMetaLoadedMsg struct {
+	Name string
+	Meta Result
+	Err  error
+}
+
+type installPackageMetaLoadedMsg struct {
 	Name string
 	Meta Result
 	Err  error
@@ -281,7 +290,15 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.SuggestionScroll = 0
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
 		m.setLog(logInfo, fmt.Sprintf("Suggestions: %d", len(msg.Results)))
-		return m, nil
+		if len(msg.Results) == 0 {
+			m.InstallMeta = nil
+			m.InstallMetaLoading = false
+			m.InstallMetaErr = ""
+			return m, nil
+		}
+
+		m, cmd := m.beginInstallPackageMetaLoad(msg.Results[0].Name)
+		return m, cmd
 	case installDoneMsg:
 		m.BusyAction = false
 		m.ModalLoading = false
@@ -368,6 +385,24 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		meta := msg.Meta
 		m.SelectedMeta = &meta
 		m.SelectedMetaErr = ""
+		return m, nil
+	case installPackageMetaLoadedMsg:
+		selectedName := m.installSelectedPackageName()
+		if msg.Name == "" || selectedName == "" || !strings.EqualFold(strings.TrimSpace(selectedName), strings.TrimSpace(msg.Name)) {
+			return m, nil
+		}
+
+		m.InstallMetaLoading = false
+		if msg.Err != nil {
+			m.InstallMeta = nil
+			m.InstallMetaErr = msg.Err.Error()
+			return m, nil
+		}
+
+		m.metaCache[strings.ToLower(strings.TrimSpace(msg.Name))] = msg.Meta
+		meta := msg.Meta
+		m.InstallMeta = &meta
+		m.InstallMetaErr = ""
 		return m, nil
 	}
 
@@ -579,6 +614,10 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			return m, nil
 		}
 
+		m.InstallMeta = nil
+		m.InstallMetaErr = ""
+		m.InstallMetaLoading = false
+
 		m.VersionModalOpen = true
 		m.VersionPackageName = pkgName
 		m.VersionLoading = true
@@ -614,6 +653,10 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			return m, nil
 		}
 
+		m.InstallMeta = nil
+		m.InstallMetaErr = ""
+		m.InstallMetaLoading = false
+
 		m.BusyAction = true
 		m.ModalLoading = true
 		m.ModalErrorText = ""
@@ -623,12 +666,16 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		if m.SuggestionSelected > 0 {
 			m.SuggestionSelected--
 			m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
+			m, cmd := m.beginInstallPackageMetaLoad(m.installSelectedPackageName())
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
 		if m.SuggestionSelected < len(m.Suggestions)-1 {
 			m.SuggestionSelected++
 			m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
+			m, cmd := m.beginInstallPackageMetaLoad(m.installSelectedPackageName())
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyPgUp:
@@ -641,7 +688,8 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.SuggestionSelected = 0
 		}
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
-		return m, nil
+		m, cmd := m.beginInstallPackageMetaLoad(m.installSelectedPackageName())
+		return m, cmd
 	case tea.KeyPgDown:
 		step := m.visibleSuggestionRows()
 		if step < 1 {
@@ -655,7 +703,8 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			}
 		}
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
-		return m, nil
+		m, cmd := m.beginInstallPackageMetaLoad(m.installSelectedPackageName())
+		return m, cmd
 	}
 
 	before := m.InstallInput.Value()
@@ -675,12 +724,18 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		m.ModalLoadingSuggestions = false
 		m.ModalLastQuery = ""
 		m.ModalErrorText = ""
+		m.InstallMeta = nil
+		m.InstallMetaErr = ""
+		m.InstallMetaLoading = false
 		return m, inputCmd
 	}
 
 	m.ModalLastQuery = after
 	m.ModalLoadingSuggestions = true
 	m.ModalErrorText = ""
+	m.InstallMeta = nil
+	m.InstallMetaErr = ""
+	m.InstallMetaLoading = false
 	searchCmd := m.searchSuggestionsCmd(after)
 	if inputCmd == nil {
 		return m, searchCmd
@@ -1075,6 +1130,9 @@ func (m *ViewModel) openModal() {
 	m.SuggestionScroll = 0
 	m.ModalLastQuery = ""
 	m.ModalLoadingSuggestions = false
+	m.InstallMeta = nil
+	m.InstallMetaLoading = false
+	m.InstallMetaErr = ""
 }
 
 func (m *ViewModel) openManagerModal() {
@@ -1130,6 +1188,9 @@ func (m *ViewModel) closeModal() {
 	m.SuggestionScroll = 0
 	m.ModalLastQuery = ""
 	m.ModalLoadingSuggestions = false
+	m.InstallMeta = nil
+	m.InstallMetaLoading = false
+	m.InstallMetaErr = ""
 	m.ModalErrorText = ""
 	m.ModalLoading = false
 	m.ManagerModalOpen = false
@@ -1213,6 +1274,53 @@ func (m ViewModel) searchSuggestionsCmd(query string) tea.Cmd {
 		results, err := m.PackageManager.Search(ctx, query)
 		return searchSuggestionsDoneMsg{Query: query, Results: results, Err: err}
 	}
+}
+
+func (m ViewModel) beginInstallPackageMetaLoad(name string) (ViewModel, tea.Cmd) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		m.InstallMeta = nil
+		m.InstallMetaErr = ""
+		m.InstallMetaLoading = false
+		return m, nil
+	}
+
+	cacheKey := strings.ToLower(name)
+	if cached, ok := m.metaCache[cacheKey]; ok {
+		meta := cached
+		m.InstallMeta = &meta
+		m.InstallMetaErr = ""
+		m.InstallMetaLoading = false
+		return m, nil
+	}
+
+	m.InstallMeta = nil
+	m.InstallMetaErr = ""
+	m.InstallMetaLoading = true
+
+	cmd := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		type metaRes struct {
+			meta Result
+			err  error
+		}
+		ch := make(chan metaRes, 1)
+		go func() {
+			meta, err := fetchPackageMetadata(name)
+			ch <- metaRes{meta: meta, err: err}
+		}()
+
+		select {
+		case <-ctx.Done():
+			return installPackageMetaLoadedMsg{Name: name, Err: ctx.Err()}
+		case res := <-ch:
+			return installPackageMetaLoadedMsg{Name: name, Meta: res.meta, Err: res.err}
+		}
+	}
+
+	return m, cmd
 }
 
 func (m ViewModel) installCmd(name string) tea.Cmd {
@@ -1736,6 +1844,9 @@ func (m ViewModel) renderInstallModal() string {
 	if modalWidth > m.Width-2 {
 		modalWidth = m.Width - 2
 	}
+	if modalWidth%2 == 0 && modalWidth > 40 {
+		modalWidth--
+	}
 
 	modalHeight := int(float64(m.Height) * 0.7)
 	if modalHeight < 10 {
@@ -1744,20 +1855,48 @@ func (m ViewModel) renderInstallModal() string {
 	if modalHeight > m.Height-2 {
 		modalHeight = m.Height - 2
 	}
-	modalStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(reqTitleColor).
-		Width(modalWidth).
-		Height(modalHeight)
-	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Install Package")
-	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
-	subtitle := lipgloss.NewStyle().Foreground(reqGlobalColor).Render("Type to search")
 	innerHeight := modalHeight - 2
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
 
-	rows := m.visibleSuggestionRows()
+	panelWidth := (modalWidth - 1) / 2
+	if panelWidth < 20 {
+		panelWidth = 20
+	}
+	panelHeight := innerHeight
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Width(modalWidth).
+		Height(modalHeight)
+	leftPanel := m.renderInstallSuggestionsPanel(panelWidth, panelHeight)
+	rightPanel := m.renderInstallPackageInfoPanel(panelWidth, panelHeight)
+	separator := lipgloss.NewStyle().Foreground(reqMutedColor).Width(1).Render("|")
+	body := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, separator, rightPanel)
+	return modalStyle.Render(body)
+}
+
+func (m ViewModel) renderInstallSuggestionsPanel(width int, rows int) string {
+	if width < 20 {
+		width = 20
+	}
+	if rows < 4 {
+		rows = 4
+	}
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Install Package")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
+	statusStyle := lipgloss.NewStyle().Foreground(reqGlobalColor)
+
+	lines := []string{title, inputStyle.Render(m.InstallInput.View()), ""}
+	remainingRows := rows - len(lines)
+	if remainingRows < 1 {
+		remainingRows = 1
+	}
+
 	start := m.SuggestionScroll
 	if start < 0 {
 		start = 0
@@ -1768,64 +1907,132 @@ func (m ViewModel) renderInstallModal() string {
 	if start < 0 {
 		start = 0
 	}
-	end := start + rows
+	end := start + remainingRows
 	if end > len(m.Suggestions) {
 		end = len(m.Suggestions)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
-	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
-
-	suggestionLines := make([]string, 0, rows)
 	if m.ModalLoadingSuggestions {
-		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(reqVenvColor).Render("Searching suggestions..."))
+		lines = append(lines, statusStyle.Render("Searching suggestions..."))
 	} else if len(m.Suggestions) == 0 {
-		suggestionLines = append(suggestionLines, muted.Render("No suggestions"))
+		lines = append(lines, muted.Render("No suggestions"))
 	} else {
 		for i := start; i < end; i++ {
-			line := TruncateText(m.Suggestions[i].Name, modalWidth-8)
+			line := TruncateText(m.Suggestions[i].Name, width-4)
 			if i == m.SuggestionSelected {
 				line = selectedStyle.Render(line)
 			}
-			suggestionLines = append(suggestionLines, line)
+			lines = append(lines, line)
 		}
 	}
 
-	body := []string{header, inputStyle.Render(m.InstallInput.View()), subtitle}
-	body = append(body, suggestionLines...)
-
-	errorBlock := ""
-	errorLinesCount := 0
-	if m.ModalErrorText != "" {
-		wrapped := WrapText(m.ModalErrorText, modalWidth-8)
-		errorBlock = lipgloss.NewStyle().Foreground(reqVersionColor).Render(wrapped)
-		errorLinesCount = len(strings.Split(wrapped, "\n"))
-	} else if m.ModalLoading {
-		errorBlock = lipgloss.NewStyle().Foreground(reqVenvColor).Render("Installing...")
-		errorLinesCount = 1
+	if m.ModalLoading {
+		lines = append(lines, muted.Render("Installing..."))
+	} else if m.ModalErrorText != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(reqVersionColor).Render(WrapText(m.ModalErrorText, width-2)))
 	}
 
-	contentHeight := innerHeight
-	if errorLinesCount > 0 {
-		contentHeight = innerHeight - errorLinesCount
-		if contentHeight < 0 {
-			contentHeight = 0
+	panelStyle := lipgloss.NewStyle().Width(width).Height(rows)
+	return panelStyle.Render(renderFixedLines(lines, width, rows))
+}
+
+func (m ViewModel) renderInstallPackageInfoPanel(width int, rows int) string {
+	if width < 18 {
+		width = 18
+	}
+	if rows < 4 {
+		rows = 4
+	}
+
+	title := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Package Info")
+	labelStyle := lipgloss.NewStyle().Foreground(reqKeyColor)
+	valueStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	warning := lipgloss.NewStyle().Foreground(reqVersionColor)
+
+	name := m.installSelectedPackageName()
+	version := "unknown"
+	if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
+		selected := m.Suggestions[m.SuggestionSelected]
+		if strings.TrimSpace(selected.Name) != "" {
+			name = strings.TrimSpace(selected.Name)
+		}
+		if strings.TrimSpace(selected.Version) != "" {
+			version = strings.TrimSpace(selected.Version)
+		}
+	}
+	if m.InstallMeta != nil && strings.EqualFold(strings.TrimSpace(m.InstallMeta.Name), strings.TrimSpace(name)) {
+		if strings.TrimSpace(m.InstallMeta.Version) != "" {
+			version = strings.TrimSpace(m.InstallMeta.Version)
 		}
 	}
 
-	if len(body) > contentHeight {
-		body = body[:contentHeight]
+	lines := []string{title, ""}
+	if strings.TrimSpace(name) == "" {
+		lines = append(lines, muted.Render("Type a package name or pick a suggestion."))
+		return renderFixedLines(lines, width, rows)
+	}
+
+	lines = append(lines,
+		labelStyle.Render("Name"),
+		valueStyle.Render(TruncateText(name, width-2)),
+		"",
+		labelStyle.Render("Latest version"),
+		valueStyle.Render(TruncateText(version, width-2)),
+		"",
+		labelStyle.Render("Description"),
+	)
+
+	if m.InstallMetaLoading {
+		lines = append(lines, muted.Render("Loading description from PyPI..."))
+	} else if m.InstallMetaErr != "" {
+		lines = append(lines, warning.Render(WrapText(m.InstallMetaErr, width-2)))
+	} else if m.InstallMeta != nil && strings.EqualFold(strings.TrimSpace(m.InstallMeta.Name), strings.TrimSpace(name)) {
+		description := strings.TrimSpace(m.InstallMeta.Description)
+		if description == "" {
+			description = "No description available."
+		}
+		lines = append(lines, WrapText(description, width-2))
 	} else {
-		for len(body) < contentHeight {
-			body = append(body, "")
+		lines = append(lines, muted.Render("Loading package details..."))
+	}
+
+	panelStyle := lipgloss.NewStyle().Width(width).Height(rows)
+	return panelStyle.Render(renderFixedLines(lines, width, rows))
+}
+
+func renderFixedLines(lines []string, width int, rows int) string {
+	if width < 1 {
+		width = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+
+	flat := make([]string, 0, len(lines))
+	for _, line := range lines {
+		flat = append(flat, strings.Split(line, "\n")...)
+	}
+
+	if len(flat) > rows {
+		flat = flat[:rows]
+	} else {
+		for len(flat) < rows {
+			flat = append(flat, "")
 		}
 	}
 
-	if errorBlock != "" {
-		body = append(body, strings.Split(errorBlock, "\n")...)
-	}
+	return strings.Join(flat, "\n")
+}
 
-	return modalStyle.Render(strings.Join(body, "\n"))
+func (m ViewModel) installSelectedPackageName() string {
+	if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
+		candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return strings.TrimSpace(m.InstallInput.Value())
 }
 
 func (m ViewModel) renderManagerModal() string {
