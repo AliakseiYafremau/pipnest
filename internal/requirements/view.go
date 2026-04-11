@@ -254,6 +254,27 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		m.closeModal()
 		m.setLog(logInfo, "Install mode closed")
 		return m, nil
+	case tea.KeyEnter:
+		if m.BusyAction {
+			return m, nil
+		}
+
+		pkgName := strings.TrimSpace(m.InstallInput.Value())
+		if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
+			candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
+			if candidate != "" {
+				pkgName = candidate
+			}
+		}
+
+		if pkgName == "" {
+			m.setLog(logInfo, "Type package name or select suggestion")
+			return m, nil
+		}
+
+		m.BusyAction = true
+		m.setLog(logLoading, fmt.Sprintf("Installing %s...", pkgName))
+		return m, m.installCmd(pkgName)
 	case tea.KeyUp, tea.KeyCtrlP:
 		if m.SuggestionSelected > 0 {
 			m.SuggestionSelected--
@@ -291,29 +312,6 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 		}
 		m.ensureSuggestionSelectionVisible(m.visibleSuggestionRows())
 		return m, nil
-	case tea.KeyRunes:
-		if len(msg.Runes) == 1 && (msg.Runes[0] == 'i' || msg.Runes[0] == 'I') {
-			if m.BusyAction {
-				return m, nil
-			}
-
-			pkgName := strings.TrimSpace(m.InstallInput.Value())
-			if len(m.Suggestions) > 0 && m.SuggestionSelected >= 0 && m.SuggestionSelected < len(m.Suggestions) {
-				candidate := strings.TrimSpace(m.Suggestions[m.SuggestionSelected].Name)
-				if candidate != "" {
-					pkgName = candidate
-				}
-			}
-
-			if pkgName == "" {
-				m.setLog(logInfo, "Type package name or select suggestion")
-				return m, nil
-			}
-
-			m.BusyAction = true
-			m.setLog(logLoading, fmt.Sprintf("Installing %s...", pkgName))
-			return m, m.installCmd(pkgName)
-		}
 	}
 
 	before := m.InstallInput.Value()
@@ -370,8 +368,16 @@ func (m ViewModel) View() string {
 		rightWidth = 10
 	}
 
-	leftStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(leftWidth).Height(bodyHeight - 2)
-	rightStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(rightWidth).Height(bodyHeight - 2)
+	leftStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("255")).
+		Width(leftWidth).
+		Height(bodyHeight - 2)
+	rightStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("255")).
+		Width(rightWidth).
+		Height(bodyHeight - 2)
 
 	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, bodyHeight-4))
 	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
@@ -394,7 +400,7 @@ func (m ViewModel) View() string {
 		y = 0
 	}
 
-	overlaid := overlayAt(stripANSI(baseMain), plainModal, x, y)
+	overlaid := overlayAt(stripANSI(baseMain), modal, x, y)
 	return lipgloss.JoinVertical(lipgloss.Left, overlaid, helpLine)
 }
 
@@ -420,18 +426,23 @@ func overlayAt(base string, overlay string, x int, y int) string {
 		}
 
 		baseRunes := []rune(baseLines[target])
-		overlayRunes := []rune(line)
-		if len(overlayRunes) == 0 {
+		overlayVisibleRunes := []rune(stripANSI(line))
+		overlayWidth := len(overlayVisibleRunes)
+		if overlayWidth == 0 {
 			continue
 		}
 
-		needed := x + len(overlayRunes)
+		needed := x + overlayWidth
 		if len(baseRunes) < needed {
 			baseRunes = append(baseRunes, []rune(strings.Repeat(" ", needed-len(baseRunes)))...)
 		}
 
-		copy(baseRunes[x:needed], overlayRunes)
-		baseLines[target] = string(baseRunes)
+		prefix := string(baseRunes[:x])
+		suffix := ""
+		if needed < len(baseRunes) {
+			suffix = string(baseRunes[needed:])
+		}
+		baseLines[target] = prefix + line + suffix
 	}
 
 	return strings.Join(baseLines, "\n")
@@ -576,13 +587,15 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		rows = 3
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render("Installed Packages")
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117")).Render("Installed Packages")
+	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	if m.LoadingList {
-		return strings.Join([]string{header, "", "Loading installed packages..."}, "\n")
+		return strings.Join([]string{header, "", loadingStyle.Render("Loading installed packages...")}, "\n")
 	}
 	if len(m.Packages) == 0 {
-		return strings.Join([]string{header, "", "No installed packages found."}, "\n")
+		return strings.Join([]string{header, "", emptyStyle.Render("No installed packages found.")}, "\n")
 	}
 
 	start := m.Scroll
@@ -601,7 +614,7 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		end = len(m.Packages)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57"))
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	lines := []string{header, ""}
@@ -627,9 +640,9 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		width = 10
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Render("Package Details")
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")).Render("Package Details")
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Bold(true)
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
 
 	if m.LoadingList {
 		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n")
@@ -648,7 +661,7 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		header,
 		"",
 		accent.Render(dep.Name),
-		muted.Render("Version"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("Version"),
 		WrapText(version, width),
 	}
 
@@ -671,10 +684,14 @@ func (m ViewModel) renderInstallModal() string {
 	if modalHeight > m.Height-2 {
 		modalHeight = m.Height - 2
 	}
-	modalStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Width(modalWidth).Height(modalHeight)
-	header := lipgloss.NewStyle().Bold(true).Render("Install Package")
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("255")).
+		Width(modalWidth).
+		Height(modalHeight)
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Render("Install Package")
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	subtitle := muted.Render("Type to search")
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("Type to search")
 	innerHeight := modalHeight - 2
 	if innerHeight < 1 {
 		innerHeight = 1
@@ -696,11 +713,12 @@ func (m ViewModel) renderInstallModal() string {
 		end = len(m.Suggestions)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("57"))
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("25"))
+	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
 
 	suggestionLines := make([]string, 0, rows)
 	if m.ModalLoadingSuggestions {
-		suggestionLines = append(suggestionLines, muted.Render("Searching suggestions..."))
+		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Searching suggestions..."))
 	} else if len(m.Suggestions) == 0 {
 		suggestionLines = append(suggestionLines, muted.Render("No suggestions"))
 	} else {
@@ -713,7 +731,7 @@ func (m ViewModel) renderInstallModal() string {
 		}
 	}
 
-	body := []string{header, m.InstallInput.View(), subtitle}
+	body := []string{header, inputStyle.Render(m.InstallInput.View()), subtitle}
 	body = append(body, suggestionLines...)
 	if len(body) > innerHeight {
 		body = body[:innerHeight]
@@ -756,7 +774,7 @@ func (m ViewModel) renderBottomHelp() string {
 	help := "ESC back | Up/Down select | D uninstall | I open install"
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	if m.ModalOpen {
-		help = "ESC close modal | Up/Down select suggestion | I install selected/typed"
+		help = "ESC close modal | Up/Down select suggestion | Enter install"
 		style = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
 	}
 
