@@ -1,4 +1,3 @@
-// TO DELETE AFTER
 package requirements
 
 import (
@@ -192,6 +191,10 @@ func fetchPackageMetadata(name string) (Result, error) {
 		Description: strings.TrimSpace(payload.Info.Summary),
 		URL:         projectURL,
 	}, nil
+}
+
+func jsonUnmarshal(body []byte, target any) error {
+	return json.Unmarshal(body, target)
 }
 
 func normalizeQuery(text string) string {

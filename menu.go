@@ -9,6 +9,7 @@ const (
 	ScreenPackages     ScreenID = "packages"
 	ScreenVenvs        ScreenID = "venvs"
 	ScreenCheatSheet   ScreenID = "cheatsheet"
+	ScreenEasterEgg    ScreenID = "easter-egg"
 )
 
 type MenuItem struct {

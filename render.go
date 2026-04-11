@@ -19,12 +19,6 @@ func renderMainMenu(m model) string {
 		width = 30
 	}
 
-	/*
-		titleStyle := lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("33")).
-			MarginBottom(1)
-	*/
 	menuItemStyle := lipgloss.NewStyle().
 		Padding(0, 1).
 		Width(width - 4)
@@ -338,7 +332,7 @@ func renderCheatScreen(m model) string {
 		Bold(true).
 		Foreground(lipgloss.Color("33"))
 
-	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
 
 	// Search input area
 	// Width(N)+Border+Padding(1): en lipgloss el Padding se suma al contenido interno.
@@ -445,6 +439,9 @@ func renderCheatScreen(m model) string {
 	} else {
 		detailLines = append(detailLines, metaStyle.Render("No command selected"))
 	}
+	detailLines = append(detailLines, "\t")
+	// Agregar serpiente decorativa en el panel de detalles
+	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
 
 	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
 	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
@@ -518,4 +515,26 @@ func renderCheatScreen(m model) string {
 		searchBox,
 		middleRow,
 		footer)
+}
+
+func renderEasterEgg(m model) string {
+	if m.width < 30 {
+		m.width = 30
+	}
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
+	artStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Width(m.width - 4).Align(lipgloss.Center)
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("ESC to return to menu")
+
+	body := strings.TrimSpace(cheatsheet.Macarrones)
+	artBox := artStyle.Render(body)
+	frame := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1).Width(m.width - 2).Render(artBox)
+
+	return lipgloss.JoinVertical(lipgloss.Left,
+		titleStyle.Render("🍝 Macarrones"),
+		"",
+		frame,
+		"",
+		footer,
+	)
 }
