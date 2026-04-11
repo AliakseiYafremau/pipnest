@@ -46,7 +46,9 @@ func (m *Model) View() string {
 	row := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 	ui := lipgloss.Place(m.view.Width, bodyHeight, lipgloss.Center, lipgloss.Top, row)
 
-	if m.replModalOpen {
+	if m.addModalOpen {
+		ui = m.renderAddInterpreterModal()
+	} else if m.replModalOpen {
 		ui = m.renderREPLModal()
 	}
 	if m.runFileModalOpen {
@@ -266,6 +268,8 @@ func (m *Model) renderLegend() string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
 		sepStyle.Render("  |  "),
+		keyStyle.Render("a"), sepStyle.Render(": add"),
+		sepStyle.Render("  |  "),
 		keyStyle.Render("r"), sepStyle.Render(": REPL"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("x"), sepStyle.Render(": run file"),
@@ -306,6 +310,31 @@ func (m *Model) renderREPLModal() string {
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2).
 		Width(42).
+		Render(strings.Join(lines, "\n"))
+
+	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
+}
+
+func (m *Model) renderAddInterpreterModal() string {
+	formView := ""
+	if m.addForm != nil {
+		formView = m.addForm.View()
+	}
+	lines := []string{
+		lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor).Render("Add Interpreter"),
+		lipgloss.NewStyle().Foreground(mutedColor).Render("Enter: next/submit  Esc/q: cancel"),
+		"",
+		formView,
+	}
+	if m.addStatus != "" {
+		lines = append(lines, "", lipgloss.NewStyle().Foreground(mutedColor).Render(m.addStatus))
+	}
+
+	modalWidth := max(56, min(m.view.Width-8, 100))
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2).
+		Width(modalWidth).
 		Render(strings.Join(lines, "\n"))
 
 	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)

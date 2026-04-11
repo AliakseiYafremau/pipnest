@@ -170,6 +170,9 @@ func ListInterpreters() []InterpreterOption {
 
 	addLocalVenvs(add)
 	addActiveVenv(add)
+	for _, option := range loadRecentInterpreters() {
+		add(option)
+	}
 
 	if condaPrefix := os.Getenv("CONDA_PREFIX"); condaPrefix != "" {
 		name := filepath.Base(condaPrefix)
@@ -292,6 +295,19 @@ func isWslEnvironment() bool {
 func isVenvLikeInterpreterPath(path string) bool {
 	if path == "" {
 		return false
+	}
+
+	cleanInput := filepath.Clean(path)
+	if root := interpreterRoot(cleanInput); root != "" {
+		if fileExists(filepath.Join(root, "pyvenv.cfg")) {
+			return true
+		}
+		if virtualEnv := os.Getenv("VIRTUAL_ENV"); virtualEnv != "" && sameOrWithinPath(cleanInput, virtualEnv) {
+			return true
+		}
+		if condaPrefix := os.Getenv("CONDA_PREFIX"); condaPrefix != "" && sameOrWithinPath(cleanInput, condaPrefix) {
+			return true
+		}
 	}
 
 	candidates := []string{filepath.Clean(path)}
