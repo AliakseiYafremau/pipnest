@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	packagemanager "pipnest/internal/requirements/package_manager"
+	"regexp"
 	"strings"
 	"time"
 
@@ -65,6 +66,8 @@ type installDoneMsg struct {
 	Name string
 	Err  error
 }
+
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 func NewViewModel() ViewModel {
 	installInput := textinput.New()
@@ -375,16 +378,21 @@ func (m ViewModel) View() string {
 	}
 
 	modal := m.renderInstallModal()
-	x := (m.Width - lipgloss.Width(modal)) / 2
+	plainModal := stripANSI(modal)
+	x := (m.Width - lipgloss.Width(plainModal)) / 2
 	if x < 0 {
 		x = 0
 	}
-	y := (m.Height - lipgloss.Height(modal)) / 2
+	y := (m.Height - lipgloss.Height(plainModal)) / 2
 	if y < 0 {
 		y = 0
 	}
 
-	return overlayAt(base, modal, x, y)
+	return overlayAt(stripANSI(base), plainModal, x, y)
+}
+
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
 }
 
 func overlayAt(base string, overlay string, x int, y int) string {
