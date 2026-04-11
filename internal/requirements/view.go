@@ -129,6 +129,7 @@ type packageMetaLoadedMsg struct {
 }
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+var markdownImagePattern = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
 var glowRenderCache = map[string]string{}
 var glamourRendererCache = map[int]*glamour.TermRenderer{}
 
@@ -817,24 +818,16 @@ func (m ViewModel) View() string {
 		rightWidth = 10
 	}
 
-	leftBorderColor := reqMutedColor
-	rightBorderColor := reqMutedColor
-	if m.FocusedPane == 0 {
-		leftBorderColor = reqTitleColor
-	} else {
-		rightBorderColor = reqTitleColor
-	}
+	basePaneStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	focusedPaneStyle := basePaneStyle.Bold(true).BorderForeground(reqTitleColor)
 
-	leftStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(leftBorderColor).
-		Width(leftWidth).
-		Height(bodyHeight - 2)
-	rightStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(rightBorderColor).
-		Width(rightWidth).
-		Height(bodyHeight - 2)
+	leftStyle := basePaneStyle.Width(leftWidth).Height(bodyHeight - 2)
+	rightStyle := basePaneStyle.Width(rightWidth).Height(bodyHeight - 2)
+	if m.FocusedPane == 0 {
+		leftStyle = focusedPaneStyle.Width(leftWidth).Height(bodyHeight - 2)
+	} else {
+		rightStyle = focusedPaneStyle.Width(rightWidth).Height(bodyHeight - 2)
+	}
 
 	listRows := bodyHeight - 6
 	if listRows < 3 {
@@ -1234,7 +1227,7 @@ func (m *ViewModel) ensureVersionSelectionVisible(visibleRows int) {
 }
 
 func (m ViewModel) visibleMainRows() int {
-	rows := m.Height - 8
+	rows := m.Height - 7
 	if rows < 4 {
 		rows = 4
 	}
@@ -1270,6 +1263,9 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Installed Packages")
 	loadingStyle := lipgloss.NewStyle().Foreground(reqVenvColor)
 	emptyStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+	mutedStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+	nameStyle := lipgloss.NewStyle().Foreground(reqGlobalColor)
+	versionStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	if m.LoadingList {
 		return strings.Join([]string{header, "", loadingStyle.Render("Loading installed packages...")}, "\n")
@@ -1288,29 +1284,55 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	if start < 0 {
 		start = 0
 	}
-
 	end := start + rows
 	if end > len(m.Packages) {
 		end = len(m.Packages)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
-	mutedStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
-
-	lines := []string{header, ""}
+	// compute aligned name column width from visible slice
+	rowTextWidth := width - 2 // 2 for "> " / "  " prefix
+	maxName := 0
 	for i := start; i < end; i++ {
-		dep := m.Packages[i]
-		line := dep.Name
-		if dep.Version != "" {
-			line += " " + dep.Version
+		if w := lipgloss.Width(m.Packages[i].Name); w > maxName {
+			maxName = w
 		}
-		line = TruncateText(line, width)
-		if i == m.Selected {
-			line = selectedStyle.Render(line)
-		}
-		lines = append(lines, line)
+	}
+	capWidth := max(8, rowTextWidth-14)
+	nameWidth := maxName
+	if nameWidth > capWidth {
+		nameWidth = capWidth
+	}
+	if nameWidth < 8 {
+		nameWidth = 8
 	}
 
+	lines := []string{header, ""}
+	pkgLines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		dep := m.Packages[i]
+		selected := i == m.Selected
+
+		name := dep.Name
+		if lipgloss.Width(name) > nameWidth {
+			name = TruncateText(name, nameWidth)
+		}
+		pad := nameWidth - lipgloss.Width(name)
+		if pad < 0 {
+			pad = 0
+		}
+		nameCol := nameStyle.Render(name + strings.Repeat(" ", pad))
+		verCol := versionStyle.Render(dep.Version)
+		row := TruncateText(lipgloss.JoinHorizontal(lipgloss.Top, nameCol, "  ", verCol), rowTextWidth)
+
+		if selected {
+			row = lipgloss.NewStyle().Reverse(true).Bold(true).Render("> " + row)
+		} else {
+			row = "  " + row
+		}
+		pkgLines = append(pkgLines, row)
+	}
+
+	lines = append(lines, pkgLines...)
 	lines = append(lines, "", mutedStyle.Render(fmt.Sprintf("%d/%d", m.Selected+1, len(m.Packages))))
 	return strings.Join(lines, "\n")
 }
@@ -1427,6 +1449,7 @@ func (m ViewModel) renderMarkdownWithGlamour(markdown string, width int) string 
 		glowRenderCache[cacheKey] = rendered
 		return rendered
 	}
+	md = markdownImagePattern.ReplaceAllString(md, "")
 	rendered, renderErr := renderer.Render(md)
 	if renderErr != nil {
 		rendered := wrapMarkdownFallback(md, width)

@@ -61,6 +61,8 @@ type model struct {
 	cheatSelected     int
 	filteredCommands  []cheatsheet.CheatCommand
 	cheatScrollOffset int
+	cheatDetailScroll int
+	cheatFocusedPane  int // 0 = list, 1 = detail
 
 	// Venvs screen
 	venvsApp *venvs.Model
@@ -89,7 +91,7 @@ func nextKonamiIndex(current int, key tea.KeyType) int {
 
 const (
 	topInputHeight       = 5
-	resultMouseStartLine = topInputHeight + 5
+	resultMouseStartLine = topInputHeight + 4
 )
 
 func initialModel() model {
@@ -385,8 +387,8 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Type == tea.MouseLeft && len(m.results) > 0 {
 			index := msg.Y - resultMouseStartLine
-			if index >= 0 && index < len(m.results) {
-				m.selected = index
+			if index >= 0 && index < len(m.results)-m.listScroll {
+				m.selected = index + m.listScroll
 				m.detailScroll = 0
 			}
 			return m, nil
@@ -481,67 +483,43 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cheatSearch.Blur()
 			m.cheatSelected = 0
 			m.cheatScrollOffset = 0
+			m.cheatDetailScroll = 0
+			m.cheatFocusedPane = 0
 			m.filteredCommands = cheatsheet.CheatCommands
 			return m, nil
 		}
 
-		// Solo procesar navegación si El Input NO tiene focus
-		if !m.cheatSearch.Focused() {
-			// Copiar comando al portapapeles con Enter
-			if msg.Type == tea.KeyEnter {
-				if m.cheatSelected >= 0 && m.cheatSelected < len(m.filteredCommands) {
-					cmd := m.filteredCommands[m.cheatSelected]
-					clipboard.WriteAll(cmd.Command)
+		switch msg.Type {
+		case tea.KeyLeft:
+			m.cheatFocusedPane = 0
+			return m, nil
+		case tea.KeyRight:
+			m.cheatFocusedPane = 1
+			return m, nil
+		case tea.KeyUp:
+			if m.cheatFocusedPane == 1 {
+				m.cheatDetailScroll -= 3
+				if m.cheatDetailScroll < 0 {
+					m.cheatDetailScroll = 0
 				}
 				return m, nil
+			} else if m.cheatSelected > 0 {
+				m.cheatSelected--
+				m.cheatDetailScroll = 0
 			}
-
-			// Navegación con Tab para cambiar entre input y lista
-			if msg.Type == tea.KeyTab {
-				m.cheatSearch.Focus()
+		case tea.KeyDown:
+			if m.cheatFocusedPane == 1 {
+				m.cheatDetailScroll += 3
 				return m, nil
+			} else if m.cheatSelected < len(m.filteredCommands)-1 {
+				m.cheatSelected++
+				m.cheatDetailScroll = 0
 			}
-
-			// Navegación en la lista
-			switch msg.Type {
-			case tea.KeyUp:
-				if m.cheatSelected > 0 {
-					m.cheatSelected--
-				}
-			case tea.KeyDown:
-				if m.cheatSelected < len(m.filteredCommands)-1 {
-					m.cheatSelected++
-				}
-			case tea.KeyPgUp:
-				// Mismo cálculo que renderCheatScreen: contentHeight = m.height-11, visibleLines = contentHeight-4
-				visibleLines := m.height - 15
-				if visibleLines < 1 {
-					visibleLines = 1
-				}
-				m.cheatSelected -= visibleLines
-				if m.cheatSelected < 0 {
-					m.cheatSelected = 0
-				}
-			case tea.KeyPgDown:
-				visibleLines := m.height - 15
-				if visibleLines < 1 {
-					visibleLines = 1
-				}
-				m.cheatSelected += visibleLines
-				if m.cheatSelected >= len(m.filteredCommands) {
-					m.cheatSelected = len(m.filteredCommands) - 1
-				}
-			case tea.KeyHome:
-				m.cheatSelected = 0
-			case tea.KeyEnd:
-				m.cheatSelected = len(m.filteredCommands) - 1
+		case tea.KeyEnter:
+			if m.cheatSelected >= 0 && m.cheatSelected < len(m.filteredCommands) {
+				clipboard.WriteAll(m.filteredCommands[m.cheatSelected].Command)
 			}
-		} else {
-			// Cuando el input tiene focus, permitir desenfocarse con la tecla de escape
-			if msg.Type == tea.KeyTab {
-				m.cheatSearch.Blur()
-				return m, nil
-			}
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -549,14 +527,10 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	}
 
-	// Actualizar input de búsqueda
 	var cmd tea.Cmd
 	m.cheatSearch, cmd = m.cheatSearch.Update(msg)
-
-	// Filtrar comandos según búsqueda
 	m.filteredCommands = cheatsheet.FilterCommands(cheatsheet.CheatCommands, m.cheatSearch.Value())
 
-	// Ajustar la selección si está fuera de rango después del filtrado
 	if m.cheatSelected >= len(m.filteredCommands) {
 		m.cheatSelected = len(m.filteredCommands) - 1
 	}
@@ -564,20 +538,17 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cheatSelected = 0
 	}
 
-	// Recalcular scroll offset para mantenerlo dentro de los límites
-	// Mismo cálculo que renderCheatScreen: contentHeight = m.height-11, visibleLines = contentHeight-4
-	visibleLines := m.height - 15
+	// keep in sync with renderCheatScreen: contentHeight = height-5, visibleLines = contentHeight-2
+	visibleLines := m.height - 7
 	if visibleLines < 1 {
 		visibleLines = 1
 	}
-
 	if m.cheatSelected >= m.cheatScrollOffset+visibleLines {
 		m.cheatScrollOffset = m.cheatSelected - visibleLines + 1
 	}
 	if m.cheatSelected < m.cheatScrollOffset {
 		m.cheatScrollOffset = m.cheatSelected
 	}
-
 	if m.cheatScrollOffset > len(m.filteredCommands)-visibleLines {
 		m.cheatScrollOffset = len(m.filteredCommands) - visibleLines
 	}

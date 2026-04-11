@@ -334,16 +334,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.addForm.Init()
 	}
 	if msg.Type == tea.KeyEsc {
-		if m.dropdownOpen {
-			m.dropdownOpen = false
-			m.focusPackages = false
-			return m, nil
-		}
-		if m.focusPackages {
-			m.focusPackages = false
-			return m, nil
-		}
-		// Return to main menu
 		return m, func() tea.Msg { return BackMsg{} }
 	}
 	if msg.Type == tea.KeyEnter {

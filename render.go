@@ -16,6 +16,67 @@ import (
 
 var stripTagsPattern = regexp.MustCompile(`<[^>]+>`)
 var glowRenderCache = map[string]string{}
+var ansiStripRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+func stripANSIMain(s string) string { return ansiStripRe.ReplaceAllString(s, "") }
+
+func overlayScrollbarOnBorder(box string, total, scroll, visibleRows int) string {
+	if total <= visibleRows || visibleRows < 1 {
+		return box
+	}
+	thumbHeight := visibleRows * visibleRows / total
+	if thumbHeight < 1 {
+		thumbHeight = 1
+	}
+	maxScroll := total - visibleRows
+	thumbPos := 0
+	if maxScroll > 0 {
+		thumbPos = scroll * (visibleRows - thumbHeight) / maxScroll
+	}
+	trackSt := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	thumbSt := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Bold(true)
+	lines := strings.Split(box, "\n")
+	for i := 1; i < len(lines)-1; i++ {
+		bodyIdx := i - 1
+		var ch string
+		if bodyIdx >= thumbPos && bodyIdx < thumbPos+thumbHeight {
+			ch = thumbSt.Render("┃")
+		} else {
+			ch = trackSt.Render("│")
+		}
+		idx := strings.LastIndex(lines[i], "│")
+		if idx >= 0 {
+			lines[i] = lines[i][:idx] + ch + lines[i][idx+len("│"):]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func injectBorderTitle(box, title string, borderColor lipgloss.Color, focused bool) string {
+	lines := strings.Split(box, "\n")
+	if len(lines) == 0 {
+		return box
+	}
+	plain := stripANSIMain(lines[0])
+	width := lipgloss.Width(plain)
+	if width < 4 {
+		return box
+	}
+	titleStr := " " + title + " "
+	titleW := lipgloss.Width(titleStr)
+	inner := width - 2
+	if titleW > inner-1 {
+		return box
+	}
+	dashSt := lipgloss.NewStyle().Foreground(borderColor)
+	if focused {
+		dashSt = dashSt.Bold(true)
+	}
+	titleSt := lipgloss.NewStyle().Foreground(borderColor).Bold(true)
+	remaining := inner - titleW
+	lines[0] = dashSt.Render("╭─") + titleSt.Render(titleStr) + dashSt.Render(strings.Repeat("─", remaining-1)+"╮")
+	return strings.Join(lines, "\n")
+}
 
 const (
 	mainMenuMinWidth  = 60
@@ -175,6 +236,7 @@ func renderMainMenu(m model) string {
 	legend := lipgloss.JoinHorizontal(lipgloss.Top, legendLeft, legendSpacer, legendRight)
 
 	lines = append(lines, logoStyle.Render(cheatsheet.LogoTitle))
+	lines = append(lines, sepStyle.Render("\n\n"))
 	lines = append(lines, titleStyle.Render("Select an option"))
 	lines = append(lines, "")
 
@@ -630,9 +692,17 @@ func renderPackagesScreen(m model) string {
 	rightPane := rightStyle.Render(rightBody)
 	bottom := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
-	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render("ESC menu | ←→ switch pane | ↑↓ navigate/scroll | Ctrl+U/D scroll detail")
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	footer := lipgloss.JoinHorizontal(lipgloss.Top,
+		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("←→"), sepStyle.Render(": switch pane"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("↑↓"), sepStyle.Render(": navigate/scroll"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("Ctrl+U/D"), sepStyle.Render(": scroll detail"),
+	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom, footer)
 }
@@ -664,201 +734,181 @@ func renderCheatScreen(m model) string {
 		return ""
 	}
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
+	const accentColor = lipgloss.Color("5")
+	const mutedColor = lipgloss.Color("8")
+
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("57")).
-		Padding(0, 1)
-
-	inputFocusStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33"))
-
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
 
-	// Search input area
-	// Width(N)+Border+Padding(1): en lipgloss el Padding se suma al contenido interno.
-	// Para que la caja ocupe m.width exacto: Width = m.width - 2 - 2 = m.width - 4
-	// (2 por borders izq/der, el padding ya está dentro del Width en lipgloss >=0.6)
+	// Search box
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		Padding(1).
 		Width(m.width - 2).
-		Height(4)
+		Height(2)
 
-	searchLabel := "Search commands"
-	if m.cheatSearch.Focused() {
-		searchLabel = inputFocusStyle.Render(searchLabel)
-	}
+	searchBox := searchBoxStyle.Render(m.cheatSearch.View())
 
-	searchBox := searchBoxStyle.Render(
-		searchLabel + "\n" +
-			m.cheatSearch.View() + "\n" +
-			metaStyle.Render("[Tab] Focus/Unfocus input"),
-	)
-
-	// Overhead real: título(1) + MarginBottom(1) + searchBox(Height4+2borders+2padding=8) + footer(1) = 11
-	contentHeight := m.height - 11
+	contentHeight := m.height - 5 // searchbox(4) + footer(1)
 	if contentHeight < 8 {
 		contentHeight = 8
 	}
 
-	// (left+2) + 1 separador + (right+2) = m.width  =>  left+right = m.width-5
 	listWidth := (m.width - 5) / 2
 	detailsWidth := m.width - 5 - listWidth
 
-	commandListStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(listWidth).
-		Height(contentHeight - 1).
-		BorderForeground(lipgloss.Color("33"))
-
-	// Renderizar lista de comandos con scroll
-	var cmdLines []string
-	cmdLines = append(cmdLines, headerStyle.Render("📄 Commands"))
-	cmdLines = append(cmdLines, metaStyle.Render(fmt.Sprintf("(%d total)", len(m.filteredCommands))))
-
-	visibleLines := contentHeight - 4 // Restar header, contador y espacios
+	// inner height of the list pane (border takes 2 rows)
+	visibleLines := contentHeight - 2
 	if visibleLines < 1 {
 		visibleLines = 1
 	}
+	// clamp scroll offset here so render and update stay in sync
+	if m.cheatScrollOffset > len(m.filteredCommands)-visibleLines {
+		m.cheatScrollOffset = max(0, len(m.filteredCommands)-visibleLines)
+	}
 
+	// focused pane styles
+	basePaneStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	focusedStyle := basePaneStyle.Bold(true).BorderForeground(accentColor)
+
+	listStyle := basePaneStyle.Width(listWidth).Height(contentHeight - 2)
+	detailStyle := basePaneStyle.Width(detailsWidth).Height(contentHeight - 2)
+	if m.cheatFocusedPane == 0 {
+		listStyle = focusedStyle.Width(listWidth).Height(contentHeight - 2)
+	} else {
+		detailStyle = focusedStyle.Width(detailsWidth).Height(contentHeight - 2)
+	}
+
+	// — Left panel: command list —
+	var cmdLines []string
 	endIdx := m.cheatScrollOffset + visibleLines
 	if endIdx > len(m.filteredCommands) {
 		endIdx = len(m.filteredCommands)
 	}
 
+	// available inner width: listWidth (box content) - 2 (prefix) - 2 (border padding implicit)
+	innerListWidth := listWidth - 2
+	// split: cmd gets at most 60%, category gets at least 40% minus separator
+	maxCmdCol := max(8, innerListWidth*6/10)
+	minCatCol := max(6, innerListWidth*4/10-2)
+
+	cmdColWidth := 8
 	for i := m.cheatScrollOffset; i < endIdx; i++ {
-		if i < 0 || i >= len(m.filteredCommands) {
-			continue
+		if w := lipgloss.Width(m.filteredCommands[i].Command); w > cmdColWidth {
+			cmdColWidth = w
 		}
+	}
+	if cmdColWidth > maxCmdCol {
+		cmdColWidth = maxCmdCol
+	}
+	catColWidth := max(minCatCol, innerListWidth-cmdColWidth-2)
 
+	for i := m.cheatScrollOffset; i < endIdx; i++ {
 		cmd := m.filteredCommands[i]
-		line := truncateText(cmd.Command, listWidth-6)
+		selected := i == m.cheatSelected
 
-		if i == m.cheatSelected {
-			line = selectedStyle.Render("> " + line)
+		cmdText := truncateText(cmd.Command, cmdColWidth)
+		catText := truncateText(cmd.Category, catColWidth)
+
+		cmdW := lipgloss.Width(cmdText)
+		pad := strings.Repeat(" ", max(0, cmdColWidth-cmdW))
+		row := strings.TrimRight(
+			lipgloss.JoinHorizontal(lipgloss.Top,
+				valueStyle.Render(cmdText+pad),
+				"  ",
+				metaStyle.Render(catText),
+			), " ")
+		if selected {
+			cmdLines = append(cmdLines, lipgloss.NewStyle().Reverse(true).Bold(true).Render("> "+row))
 		} else {
-			line = "  " + line
+			cmdLines = append(cmdLines, "  "+row)
 		}
-		cmdLines = append(cmdLines, line)
 	}
 
-	// Padding si hay menos líneas de las visibles
-	for i := endIdx; i < m.cheatScrollOffset+visibleLines; i++ {
-		cmdLines = append(cmdLines, "")
+	cmdList := listStyle.Render(strings.Join(cmdLines, "\n"))
+	if len(m.filteredCommands) > visibleLines {
+		cmdList = overlayScrollbarOnBorder(cmdList, len(m.filteredCommands), m.cheatScrollOffset, visibleLines)
 	}
 
-	cmdList := commandListStyle.Render(strings.Join(cmdLines, "\n"))
-
-	// Renderizar panel de detalles
-	detailStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		Width(detailsWidth).
-		Height(contentHeight - 1).
-		BorderForeground(lipgloss.Color("33"))
-
+	// — Right panel: detail + snek —
 	var detailLines []string
-	detailLines = append(detailLines, headerStyle.Render("ℹ️  Details"))
-
 	if m.cheatSelected >= 0 && m.cheatSelected < len(m.filteredCommands) {
 		cmd := m.filteredCommands[m.cheatSelected]
-
-		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, metaStyle.Render("Category:"))
-		detailLines = append(detailLines, cmd.Category)
-
-		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, metaStyle.Render("Command:"))
-		detailLines = append(detailLines, wrapText(cmd.Command, detailsWidth-4))
-
-		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, metaStyle.Render("Description:"))
-		detailLines = append(detailLines, wrapText(cmd.Description, detailsWidth-4))
-
-		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, metaStyle.Render("[Enter] Copy | [↑↓] Navigate\n"))
+		detailLines = append(detailLines,
+			keyStyle.Render("Category"), cmd.Category,
+			"",
+			keyStyle.Render("Command"), wrapText(cmd.Command, detailsWidth-4),
+			"",
+			keyStyle.Render("Description"), wrapText(cmd.Description, detailsWidth-4),
+		)
 	} else {
-		detailLines = append(detailLines, metaStyle.Render("No command selected"))
+		detailLines = append(detailLines, metaStyle.Render("No command selected."))
 	}
-	detailLines = append(detailLines, "\t")
-	// Agregar serpiente decorativa en el panel de detalles
+
+	// snek art: solo se muestra si cabe completo (ancho y alto)
 	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-
-	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
-	snekLines = strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-	maxSnekLines := (contentHeight - len(detailLines)) - 2
 	panelInner := detailsWidth - 4
-
+	totalDetailRows := contentHeight - 2
+	availableSnekRows := totalDetailRows - len(detailLines) - 1
 	snekMaxWidth := 0
 	for _, sl := range snekLines {
 		if w := lipgloss.Width(sl); w > snekMaxWidth {
 			snekMaxWidth = w
 		}
 	}
-
-	if maxSnekLines > 0 && snekMaxWidth > 0 {
+	if availableSnekRows >= len(snekLines) && snekMaxWidth <= panelInner {
 		detailLines = append(detailLines, "")
-		for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
-			snekLine := snekLines[i]
-			lineWidth := lipgloss.Width(snekLine)
-			if lineWidth == 0 {
+		for _, sl := range snekLines {
+			lw := lipgloss.Width(sl)
+			if lw == 0 {
 				detailLines = append(detailLines, "")
 				continue
 			}
-			if lineWidth <= panelInner {
-				pad := (panelInner - lineWidth) / 2
-				snekLine = strings.Repeat(" ", pad) + snekLine
-			} else {
-				type cp struct {
-					r rune
-					x int
-				}
-				var chars []cp
-				col := 0
-				for _, r := range snekLine {
-					chars = append(chars, cp{r, col})
-					col++
-				}
-				scaledRunes := make([]rune, panelInner)
-				for j := range scaledRunes {
-					scaledRunes[j] = ' '
-				}
-				for _, c := range chars {
-					newX := 0
-					if snekMaxWidth > 1 {
-						newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
-					}
-					if newX >= 0 && newX < panelInner {
-						scaledRunes[newX] = c.r
-					}
-				}
-				snekLine = strings.TrimRight(string(scaledRunes), " ")
-			}
-			detailLines = append(detailLines, snekStyle.Render(snekLine))
+			sl = strings.Repeat(" ", (panelInner-lw)/2) + sl
+			detailLines = append(detailLines, snekStyle.Render(sl))
 		}
 	}
 
-	// Padding para rellenar la altura si es necesario
-	for len(detailLines) < contentHeight-1 {
-		detailLines = append(detailLines, "")
+	// scrollable detail
+	flat := make([]string, 0, len(detailLines))
+	for _, l := range detailLines {
+		flat = append(flat, strings.Split(l, "\n")...)
+	}
+	maxScroll := max(0, len(flat)-totalDetailRows)
+	if m.cheatDetailScroll > maxScroll {
+		m.cheatDetailScroll = maxScroll
+	}
+	start := m.cheatDetailScroll
+	end := start + totalDetailRows
+	if end > len(flat) {
+		end = len(flat)
+	}
+	visible := flat[start:end]
+	for len(visible) < totalDetailRows {
+		visible = append(visible, "")
 	}
 
-	details := detailStyle.Render(strings.Join(detailLines, "\n"))
+	detailPane := detailStyle.Render(strings.Join(visible, "\n"))
+	if maxScroll > 0 {
+		detailPane = overlayScrollbarOnBorder(detailPane, len(flat), start, totalDetailRows)
+	}
 
-	middleRow := lipgloss.JoinHorizontal(lipgloss.Top, cmdList, " ", details)
+	middleRow := lipgloss.JoinHorizontal(lipgloss.Top, cmdList, " ", detailPane)
 
-	// Footer con instrucciones
-	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render("↑/↓ Navigate | Type to search | Tab: Focus/Unfocus | Enter: Copy | ESC: Menu")
+	cheatKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	cheatSepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	footer := lipgloss.JoinHorizontal(lipgloss.Top,
+		cheatKeyStyle.Render("Esc"), cheatSepStyle.Render(": menu"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("←→"), cheatSepStyle.Render(": switch pane"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("↑↓"), cheatSepStyle.Render(": navigate/scroll"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("Enter"), cheatSepStyle.Render(": copy"),
+	)
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		searchBox,
-		middleRow,
-		footer)
+	return lipgloss.JoinVertical(lipgloss.Left, searchBox, middleRow, footer)
 }
 
 func renderEasterEgg(m model) string {
