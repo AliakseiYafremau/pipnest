@@ -136,6 +136,7 @@ func renderMainMenu(m model) string {
 
 	// Agregar ASCII art logo
 	logoStyle := lipgloss.NewStyle().
+		Bold(true).
 		Foreground(lipgloss.Color(menuTitleColor)).
 		Width(geom.menuWidth).
 		Align(lipgloss.Center)
