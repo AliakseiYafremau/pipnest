@@ -12,13 +12,18 @@ import (
 type BackMsg struct{}
 
 const (
-	focusHighlightColor = "57"
-	minWidth            = 72
-	minHeight           = 14
+	minWidth  = 72
+	minHeight = 14
 )
 
 type replFinishedMsg struct {
 	err error
+}
+
+type detailsLoadedMsg struct {
+	path    string
+	details InterpreterDetails
+	err     error
 }
 
 // Model holds the full state of the venvs screen.
@@ -37,6 +42,8 @@ type Model struct {
 	startedWithVenv   bool
 	detailsCache      map[string]InterpreterDetails
 	highlighted       InterpreterDetails
+	loadingPath       string
+	loadingStarted    bool
 }
 
 // NewModel initialises a ready-to-use venvs Model.
@@ -48,13 +55,29 @@ func NewModel() Model {
 		detailsCache:    make(map[string]InterpreterDetails),
 	}
 	m.applySelection()
-	m.refreshHighlightedDetails()
+
+	// Initialize highlighted with the first interpreter's basic info
+	if len(m.interpreters) > 0 {
+		interpreter := m.interpreters[m.selected]
+		m.highlighted = InterpreterDetails{
+			Path: interpreter.Path,
+			Kind: interpreter.Kind,
+		}
+		// Mark as loading so the view shows the loading state
+		m.loadingPath = interpreter.Path
+	}
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m *Model) Init() tea.Cmd {
+	// Load highlighted interpreter details asynchronously
+	if len(m.interpreters) > 0 {
+		return m.queueDetailsLoad(m.interpreters[m.selected])
+	}
+	return nil
+}
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.replModalOpen {
@@ -79,39 +102,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.replStatus = "REPL closed"
 		}
+	case detailsLoadedMsg:
+		if msg.err == nil && msg.path == m.interpreters[m.selected].Path {
+			m.highlighted = msg.details
+			m.detailsCache[msg.path] = msg.details
+			if m.packageSelected >= len(m.highlighted.Packages) {
+				m.packageSelected = 0
+			}
+			m.packageScroll = 0
+		}
+		m.loadingPath = ""
 	}
+
+	// Trigger loading if we have a path to load but haven't started yet
+	if !m.loadingStarted && m.loadingPath != "" && len(m.interpreters) > 0 {
+		m.loadingStarted = true
+		if _, exists := m.detailsCache[m.loadingPath]; !exists {
+			for _, opt := range m.interpreters {
+				if opt.Path == m.loadingPath {
+					return m, m.queueDetailsLoad(opt)
+				}
+			}
+		}
+	}
+
 	return m, nil
 }
 
-func (m Model) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.replModalOpen = false
 		m.replStatus = ""
 		return m, nil
 	case tea.KeyEnter:
-		if len(m.interpreters) == 0 || m.selected >= len(m.interpreters) {
-			m.replModalOpen = false
-			m.replStatus = ""
-			return m, nil
-		}
-		replPath := m.interpreters[m.selected].Path
-		if replPath == "" {
-			m.replModalOpen = false
-			m.replStatus = ""
-			return m, nil
-		}
 		m.replModalOpen = false
 		m.replStatus = ""
-		cmd := exec.Command(replPath)
-		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return replFinishedMsg{err: err}
-		})
+		return m, m.launchSelectedREPL()
 	}
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyCtrlC || msg.String() == "q" {
 		m.applySelection()
 		return m, tea.Quit
@@ -129,11 +161,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.String() == "r" {
-		if len(m.interpreters) > 0 {
-			m.replModalOpen = true
-			m.replStatus = "Open REPL with selected interpreter"
-		}
-		return m, nil
+		m.replModalOpen = false
+		m.replStatus = ""
+		return m, m.launchSelectedREPL()
 	}
 	if msg.Type == tea.KeyEsc {
 		if m.dropdownOpen {
@@ -160,7 +190,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleEnter() (tea.Model, tea.Cmd) {
+func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if len(m.interpreters) == 0 {
 		return m, nil
 	}
@@ -170,16 +200,30 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	}
 	if !m.dropdownOpen {
 		m.dropdownOpen = true
-		m.refreshHighlightedDetails()
-		return m, nil
+		cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+		return m, cmd
 	}
 	m.applySelection()
 	m.dropdownOpen = false
-	m.refreshHighlightedDetails()
-	return m, nil
+	cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+	return m, cmd
 }
 
-func (m Model) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) launchSelectedREPL() tea.Cmd {
+	if len(m.interpreters) == 0 || m.selected >= len(m.interpreters) {
+		return nil
+	}
+	replPath := m.interpreters[m.selected].Path
+	if replPath == "" {
+		return nil
+	}
+	replCmd := exec.Command(replPath)
+	return tea.ExecProcess(replCmd, func(err error) tea.Msg {
+		return replFinishedMsg{err: err}
+	})
+}
+
+func (m *Model) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "k":
 		m.scrollPackages(-1)
@@ -199,18 +243,20 @@ func (m Model) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "k":
 		if m.selected > 0 {
 			m.selected--
-			m.refreshHighlightedDetails()
+			cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+			return m, cmd
 		}
 		return m, nil
 	case "j":
 		if m.selected < len(m.interpreters)-1 {
 			m.selected++
-			m.refreshHighlightedDetails()
+			cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -218,13 +264,15 @@ func (m Model) handleDropdownNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyUp, tea.KeyCtrlP:
 		if m.selected > 0 {
 			m.selected--
-			m.refreshHighlightedDetails()
+			cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
 		if m.selected < len(m.interpreters)-1 {
 			m.selected++
-			m.refreshHighlightedDetails()
+			cmd := m.queueDetailsLoad(m.interpreters[m.selected])
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -290,6 +338,35 @@ func (m *Model) loadDetails(option InterpreterOption) InterpreterDetails {
 	details := option.Details()
 	m.detailsCache[option.Path] = details
 	return details
+}
+
+func (m *Model) queueDetailsLoad(option InterpreterOption) tea.Cmd {
+	if option.Path == "" {
+		return nil
+	}
+
+	// Check if already cached
+	if details, exists := m.detailsCache[option.Path]; exists {
+		m.highlighted = details
+		return nil
+	}
+
+	// Mark as loading and return a command to load asynchronously
+	m.loadingStarted = true
+	m.loadingPath = option.Path
+	m.highlighted = InterpreterDetails{
+		Path: option.Path,
+		Kind: option.Kind,
+	}
+
+	return func() tea.Msg {
+		details := option.Details()
+		return detailsLoadedMsg{
+			path:    option.Path,
+			details: details,
+			err:     nil,
+		}
+	}
 }
 
 // SetSize sets the terminal dimensions on the model.

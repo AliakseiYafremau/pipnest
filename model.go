@@ -116,8 +116,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.requirements, cmd = m.requirements.Update(ws)
 		if m.venvsApp != nil {
 			updated, _ := m.venvsApp.Update(ws)
-			if vm, ok := updated.(venvs.Model); ok {
-				m.venvsApp = &vm
+			if vm, ok := updated.(*venvs.Model); ok {
+				m.venvsApp = vm
 			}
 		}
 		_ = cmd
@@ -165,7 +165,6 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.reqLoading = true
 				m.reqErr = nil
 				return m, loadInstalledPackages(m.packageManager)
-				m.requirements.Input.Focus()
 			}
 			if m.currentScreen == ScreenCheatSheet {
 				m.cheatSearch.Focus()
@@ -176,6 +175,7 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				v := venvs.NewModel()
 				v.SetSize(m.width, m.height)
 				m.venvsApp = &v
+				return m, m.venvsApp.Init()
 			}
 		case tea.KeyRunes:
 			if msg.String() == "q" {
@@ -371,8 +371,8 @@ func (m model) updateVenvs(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = ws.Height
 	}
 	updated, cmd := m.venvsApp.Update(msg)
-	if vm, ok := updated.(venvs.Model); ok {
-		m.venvsApp = &vm
+	if vm, ok := updated.(*venvs.Model); ok {
+		m.venvsApp = vm
 	}
 	return m, cmd
 }
