@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type PipManager struct {
@@ -304,6 +306,9 @@ func fetchPyPIVersions(ctx context.Context, pkgName string) ([]string, error) {
 	}
 
 	sort.Slice(rows, func(i, j int) bool {
+		if cmp := compareVersionStrings(rows[i].Version, rows[j].Version); cmp != 0 {
+			return cmp > 0
+		}
 		if rows[i].HasUpload && rows[j].HasUpload && !rows[i].Uploaded.Equal(rows[j].Uploaded) {
 			return rows[i].Uploaded.After(rows[j].Uploaded)
 		}
@@ -319,4 +324,159 @@ func fetchPyPIVersions(ctx context.Context, pkgName string) ([]string, error) {
 	}
 
 	return versions, nil
+}
+
+type versionToken struct {
+	isNumber bool
+	number   int
+	text     string
+}
+
+func compareVersionStrings(a string, b string) int {
+	aTokens := tokenizeVersion(a)
+	bTokens := tokenizeVersion(b)
+
+	maxLen := len(aTokens)
+	if len(bTokens) > maxLen {
+		maxLen = len(bTokens)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		if i >= len(aTokens) {
+			if isPrereleaseToken(bTokens[i].text) {
+				return 1
+			}
+			return -1
+		}
+		if i >= len(bTokens) {
+			if isPrereleaseToken(aTokens[i].text) {
+				return -1
+			}
+			return 1
+		}
+
+		at := aTokens[i]
+		bt := bTokens[i]
+
+		if at.isNumber && bt.isNumber {
+			if at.number > bt.number {
+				return 1
+			}
+			if at.number < bt.number {
+				return -1
+			}
+			continue
+		}
+
+		if !at.isNumber && !bt.isNumber {
+			if rankA, okA := qualifierRank(at.text); okA {
+				if rankB, okB := qualifierRank(bt.text); okB && rankA != rankB {
+					if rankA > rankB {
+						return 1
+					}
+					return -1
+				}
+			}
+
+			cmp := strings.Compare(at.text, bt.text)
+			if cmp > 0 {
+				return 1
+			}
+			if cmp < 0 {
+				return -1
+			}
+			continue
+		}
+
+		if at.isNumber {
+			if isPrereleaseToken(bt.text) {
+				return 1
+			}
+			return -1
+		}
+
+		if isPrereleaseToken(at.text) {
+			return -1
+		}
+		return 1
+	}
+
+	return 0
+}
+
+func tokenizeVersion(version string) []versionToken {
+	v := strings.ToLower(strings.TrimSpace(version))
+	v = strings.TrimPrefix(v, "v")
+
+	tokens := make([]versionToken, 0, 8)
+	var current strings.Builder
+	currentIsNumber := false
+	hasCurrent := false
+
+	flush := func() {
+		if !hasCurrent {
+			return
+		}
+		part := current.String()
+		if currentIsNumber {
+			n, _ := strconv.Atoi(part)
+			tokens = append(tokens, versionToken{isNumber: true, number: n})
+		} else {
+			tokens = append(tokens, versionToken{text: part})
+		}
+		current.Reset()
+		hasCurrent = false
+	}
+
+	for _, r := range v {
+		if unicode.IsDigit(r) {
+			if hasCurrent && !currentIsNumber {
+				flush()
+			}
+			currentIsNumber = true
+			current.WriteRune(r)
+			hasCurrent = true
+			continue
+		}
+
+		if unicode.IsLetter(r) {
+			if hasCurrent && currentIsNumber {
+				flush()
+			}
+			currentIsNumber = false
+			current.WriteRune(r)
+			hasCurrent = true
+			continue
+		}
+
+		flush()
+	}
+
+	flush()
+	return tokens
+}
+
+func qualifierRank(token string) (int, bool) {
+	switch token {
+	case "dev":
+		return 0, true
+	case "a", "alpha":
+		return 1, true
+	case "b", "beta":
+		return 2, true
+	case "rc", "c", "pre", "preview":
+		return 3, true
+	case "post", "rev", "r":
+		return 5, true
+	default:
+		return 0, false
+	}
+}
+
+func isPrereleaseToken(token string) bool {
+	_, ok := qualifierRank(token)
+	if !ok {
+		return false
+	}
+	return token != "post" && token != "rev" && token != "r"
 }

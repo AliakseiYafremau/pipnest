@@ -150,6 +150,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		_ = cmd
 	}
 
+	// Always forward requirements async messages regardless of current screen,
+	// so background loads (pip list, metadata) complete even while on other screens.
+	if m.currentScreen != ScreenRequirements {
+		if requirements.IsAsyncMsg(msg) {
+			var cmd tea.Cmd
+			m.requirements, cmd = m.requirements.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// Navegar según la pantalla actual
 	switch m.currentScreen {
 	case ScreenMainMenu:

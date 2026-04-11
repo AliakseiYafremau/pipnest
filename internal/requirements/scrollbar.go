@@ -10,6 +10,12 @@ import (
 // rounded-border box with scrollbar thumb/track characters.
 // total = total number of items, scroll = first visible item, visibleRows = visible item count.
 func overlayScrollbarOnBorder(box string, total, scroll, visibleRows int) string {
+	return overlayScrollbarOnBorderWithColors(box, total, scroll, visibleRows, lipgloss.Color("8"), lipgloss.Color("7"))
+}
+
+// overlayScrollbarOnBorderWithColors is like overlayScrollbarOnBorder but allows
+// tuning track/thumb contrast for specific contexts (for example, modal lists).
+func overlayScrollbarOnBorderWithColors(box string, total, scroll, visibleRows int, trackColor, thumbColor lipgloss.Color) string {
 	if total <= visibleRows || visibleRows < 1 {
 		return box
 	}
@@ -24,8 +30,8 @@ func overlayScrollbarOnBorder(box string, total, scroll, visibleRows int) string
 		thumbPos = scroll * (visibleRows - thumbHeight) / maxScroll
 	}
 
-	barStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	thumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
+	barStyle := lipgloss.NewStyle().Foreground(trackColor)
+	thumbStyle := lipgloss.NewStyle().Foreground(thumbColor)
 
 	lines := strings.Split(box, "\n")
 	// Body lines are lines[1] to lines[len-2] (first and last are top/bottom border).
@@ -33,9 +39,9 @@ func overlayScrollbarOnBorder(box string, total, scroll, visibleRows int) string
 		bodyIdx := i - 1
 		var ch string
 		if bodyIdx >= thumbPos && bodyIdx < thumbPos+thumbHeight {
-			ch = thumbStyle.Render("█")
+			ch = thumbStyle.Render("┃")
 		} else {
-			ch = barStyle.Render("▐")
+			ch = barStyle.Render("│")
 		}
 		lines[i] = replaceLastBorderChar(lines[i], ch)
 	}

@@ -18,7 +18,7 @@ type MenuItem struct {
 }
 
 var MainMenuItems = []MenuItem{
-	{Label: "Requirements", Target: ScreenRequirements},
+	{Label: "Packages", Target: ScreenRequirements},
 	{Label: "Venvs", Target: ScreenVenvs},
 	{Label: "Cheatsheet", Target: ScreenCheatSheet},
 }

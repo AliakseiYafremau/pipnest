@@ -271,7 +271,7 @@ func renderResults(results []searchResult, width int, selectedIndex int, scroll 
 	if len(results) == 0 {
 		return strings.Join([]string{
 			headerStyle.Render("Packages"),
-			subtitleStyle.Render("← → focus  ↑↓ navigate"),
+			subtitleStyle.Render("←/→ focus  ↑/↓ navigate"),
 			"",
 			"Type a package name and press Enter.",
 		}, "\n")
@@ -295,7 +295,7 @@ func renderResults(results []searchResult, width int, selectedIndex int, scroll 
 
 	var lines []string
 	lines = append(lines, headerStyle.Render("Packages"))
-	lines = append(lines, subtitleStyle.Render("← → focus  ↑↓ navigate"))
+	lines = append(lines, subtitleStyle.Render("←/→ focus  ↑/↓ navigate"))
 	lines = append(lines, "")
 
 	end := scroll + visibleRows
@@ -695,13 +695,13 @@ func renderPackagesScreen(m model) string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
+		keyStyle.Render("←/→"), sepStyle.Render(": switch pane"),
 		sepStyle.Render("  |  "),
-		keyStyle.Render("←→"), sepStyle.Render(": switch pane"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("↑↓"), sepStyle.Render(": navigate/scroll"),
+		keyStyle.Render("↑/↓"), sepStyle.Render(": navigate/scroll"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("Ctrl+U/D"), sepStyle.Render(": scroll detail"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom, footer)
@@ -899,13 +899,13 @@ func renderCheatScreen(m model) string {
 	cheatKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	cheatSepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		cheatKeyStyle.Render("Esc"), cheatSepStyle.Render(": menu"),
-		cheatSepStyle.Render("  |  "),
-		cheatKeyStyle.Render("←→"), cheatSepStyle.Render(": switch pane"),
-		cheatSepStyle.Render("  |  "),
-		cheatKeyStyle.Render("↑↓"), cheatSepStyle.Render(": navigate/scroll"),
-		cheatSepStyle.Render("  |  "),
 		cheatKeyStyle.Render("Enter"), cheatSepStyle.Render(": copy"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("←/→"), cheatSepStyle.Render(": switch pane"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("↑/↓"), cheatSepStyle.Render(": navigate/scroll"),
+		cheatSepStyle.Render("  |  "),
+		cheatKeyStyle.Render("Esc"), cheatSepStyle.Render(": menu"),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, searchBox, middleRow, footer)
