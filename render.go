@@ -81,6 +81,8 @@ func injectBorderTitle(box, title string, borderColor lipgloss.Color, focused bo
 const (
 	mainMenuMinWidth  = 60
 	mainMenuMinHeight = 12
+	packagesMinWidth  = 56
+	packagesMinHeight = 12
 )
 
 type mainMenuGeometry struct {
@@ -153,6 +155,31 @@ func renderMainMenuInsufficientSpace(m model) string {
 		"Not enough terminal space",
 		fmt.Sprintf("Current: %dx%d", m.width, m.height),
 		fmt.Sprintf("Minimum: %dx%d", mainMenuMinWidth, mainMenuMinHeight),
+		"Resize the terminal to continue.",
+	}, "\n")
+
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2).
+		Render(message)
+
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func renderPackagesInsufficientSpace(m model) string {
+	width := m.width
+	if width < 1 {
+		width = 1
+	}
+	height := m.height
+	if height < 1 {
+		height = 1
+	}
+
+	message := strings.Join([]string{
+		"Not enough terminal space",
+		fmt.Sprintf("Current: %dx%d", m.width, m.height),
+		fmt.Sprintf("Minimum: %dx%d", packagesMinWidth, packagesMinHeight),
 		"Resize the terminal to continue.",
 	}, "\n")
 
@@ -407,6 +434,9 @@ func joinScrollableLines(lines []string, width int, height int, scroll int) (str
 		parts := strings.Split(line, "\n")
 		flat = append(flat, parts...)
 	}
+	for i := range flat {
+		flat[i] = clampMainLineToWidth(flat[i], width)
+	}
 
 	maxScroll := 0
 	if len(flat) > height {
@@ -442,6 +472,17 @@ func joinScrollableLines(lines []string, width int, height int, scroll int) (str
 		return attachScrollbar(strings.Join(chunk, "\n"), scrollbar, 0, contentWidth), maxScroll
 	}
 	return strings.Join(chunk, "\n"), 0
+}
+
+func clampMainLineToWidth(line string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	plain := stripANSIMain(line)
+	if lipgloss.Width(plain) <= width {
+		return line
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
 // renderScrollbar builds a vertical scrollbar string of `visibleRows` characters
@@ -614,27 +655,21 @@ func renderPackagesScreen(m model) string {
 	if m.width == 0 {
 		return ""
 	}
+	if m.width < packagesMinWidth || m.height < packagesMinHeight {
+		return renderPackagesInsufficientSpace(m)
+	}
 
 	inputHeight := topInputHeight
 	contentHeight := m.height - inputHeight - 1
-	if contentHeight < 4 {
-		contentHeight = 4
-	}
-	if contentHeight < 10 {
-		contentHeight = 10
+	if contentHeight < 1 {
+		contentHeight = 1
 	}
 
 	// Con RoundedBorder, Width(N) produce N+2 columnas reales (border izq + content + border der).
 	// El separador "│" ocupa 1 columna.
 	// Total: (left+2) + 1 + (right+2) = m.width  =>  left+right = m.width-5
 	leftPaneWidth := (m.width - 5) / 2
-	if leftPaneWidth < 24 {
-		leftPaneWidth = 24
-	}
 	rightPaneWidth := m.width - 5 - leftPaneWidth
-	if rightPaneWidth < 24 {
-		rightPaneWidth = 24
-	}
 
 	// inputStyle: Width(N)+Border => N+2 cols. Para ocupar m.width exacto: N = m.width-2
 	focusColor := lipgloss.Color("4")
@@ -675,8 +710,8 @@ func renderPackagesScreen(m model) string {
 	}
 
 	innerHeight := contentHeight - 4
-	if innerHeight < 4 {
-		innerHeight = 4
+	if innerHeight < 1 {
+		innerHeight = 1
 	}
 
 	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
@@ -874,6 +909,9 @@ func renderCheatScreen(m model) string {
 	flat := make([]string, 0, len(detailLines))
 	for _, l := range detailLines {
 		flat = append(flat, strings.Split(l, "\n")...)
+	}
+	for i := range flat {
+		flat[i] = clampMainLineToWidth(flat[i], max(1, detailsWidth-2))
 	}
 	maxScroll := max(0, len(flat)-totalDetailRows)
 	if m.cheatDetailScroll > maxScroll {

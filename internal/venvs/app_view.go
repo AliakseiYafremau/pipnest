@@ -3,10 +3,13 @@ package venvs
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
+
+var venvAnsiStripRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 var (
 	mutedColor      = lipgloss.Color("8")
@@ -301,11 +304,17 @@ func (m *Model) renderREPLModal() string {
 	if m.replStatus != "" {
 		lines = append(lines, "", lipgloss.NewStyle().Foreground(mutedColor).Render(m.replStatus))
 	}
+	modalWidth := 42
+	innerWidth := modalWidth - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	lines = normalizeVenvViewportLines(lines, innerWidth, len(lines))
 
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2).
-		Width(42).
+		Width(modalWidth).
 		Render(strings.Join(lines, "\n"))
 
 	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
@@ -327,6 +336,12 @@ func (m *Model) renderAddInterpreterModal() string {
 	}
 
 	modalWidth := max(56, min(m.view.Width-8, 100))
+	innerWidth := modalWidth - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	maxRows := max(1, m.view.Height-6)
+	lines = normalizeVenvViewportLines(lines, innerWidth, maxRows)
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2).
@@ -364,6 +379,12 @@ func (m *Model) renderKeybindsModal() string {
 	if modalWidth < 56 {
 		modalWidth = 56
 	}
+	innerWidth := modalWidth - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	maxRows := max(1, m.view.Height-6)
+	rows = normalizeVenvViewportLines(rows, innerWidth, maxRows)
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2).
@@ -393,12 +414,48 @@ func (m *Model) renderRunFileModal() string {
 		rows = append(rows, "", muted.Render(m.runFileStatus))
 	}
 	modalWidth := min(max(60, m.view.Width-12), 100)
+	innerWidth := modalWidth - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	maxRows := max(1, m.view.Height-6)
+	rows = normalizeVenvViewportLines(rows, innerWidth, maxRows)
 	modal := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1, 2).
 		Width(modalWidth).
 		Render(strings.Join(rows, "\n"))
 	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
+}
+
+func normalizeVenvViewportLines(lines []string, width int, rows int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		for _, part := range strings.Split(line, "\n") {
+			out = append(out, clampVenvLineToWidth(part, width))
+		}
+	}
+	if len(out) > rows {
+		out = out[:rows]
+	}
+	return out
+}
+
+func clampVenvLineToWidth(line string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	plain := venvAnsiStripRe.ReplaceAllString(line, "")
+	if lipgloss.Width(plain) <= width {
+		return line
+	}
+	return truncateLine(plain, width)
 }
 
 // fillToHeight pads or trims lines to exactly height entries.

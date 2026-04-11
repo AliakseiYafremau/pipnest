@@ -57,29 +57,36 @@ type ViewModel struct {
 	LoadingList bool
 	BusyAction  bool
 
-	ModalOpen               bool
-	InstallInput            textinput.Model
-	Suggestions             []packagemanager.Dependency
-	SuggestionSelected      int
-	SuggestionScroll        int
-	ModalLoadingSuggestions bool
-	ModalLastQuery          string
-	ModalErrorText          string
-	ModalLoading            bool
-	InstallMeta             *Result
-	InstallMetaLoading      bool
-	InstallMetaErr          string
-	ManagerModalOpen        bool
-	ManagerOptions          []managerOption
-	ManagerSelected         int
-	ManagerScroll           int
-	VersionModalOpen        bool
-	VersionsList            []string
-	VersionSelected         int
-	VersionScroll           int
-	VersionLoading          bool
-	VersionPackageName      string
-	VersionErrorText        string
+	ModalOpen                  bool
+	InstallInput               textinput.Model
+	Suggestions                []packagemanager.Dependency
+	SuggestionSelected         int
+	SuggestionScroll           int
+	ModalLoadingSuggestions    bool
+	ModalLastQuery             string
+	ModalSearchSeq             int
+	ModalErrorText             string
+	ModalLoading               bool
+	ModalFocusedPane           int
+	ModalSuggestionMeta        *Result
+	ModalSuggestionMetaLoading bool
+	ModalSuggestionMetaName    string
+	ModalSuggestionMetaScroll  int
+	InstallMeta                *Result
+	InstallMetaLoading         bool
+	InstallMetaErr             string
+	ManagerModalOpen           bool
+	ManagerOptions             []managerOption
+	ManagerSelected            int
+	ManagerScroll              int
+	VersionModalOpen           bool
+	VersionsList               []string
+	VersionSelected            int
+	VersionScroll              int
+	VersionLoading             bool
+	VersionPackageName         string
+	VersionErrorText           string
+	VersionFromMain            bool
 
 	ActionModalOpen    bool
 	ActionModalLoading bool
@@ -1086,7 +1093,7 @@ func (m ViewModel) View() string {
 		listRows = 1
 	}
 
-	leftPane := leftStyle.Render(m.renderInstalledPackages(max(1, leftWidth-4), listRows))
+	leftPane := leftStyle.Render(m.renderInstalledPackages(max(1, leftWidth), listRows))
 	if len(m.Packages) > listRows {
 		leftPane = overlayScrollbarOnBorder(leftPane, len(m.Packages), m.Scroll, listRows)
 	}
@@ -1095,7 +1102,7 @@ func (m ViewModel) View() string {
 	if rightRows < 1 {
 		rightRows = 1
 	}
-	detailContent, detailTotal, detailScroll := m.renderPackageDetails(max(1, rightWidth-4), rightRows)
+	detailContent, detailTotal, detailScroll := m.renderPackageDetails(max(1, rightWidth), rightRows)
 	rightPane := rightStyle.Render(detailContent)
 	if detailTotal > rightRows {
 		rightPane = overlayScrollbarOnBorder(rightPane, detailTotal, detailScroll, rightRows)
@@ -1104,6 +1111,7 @@ func (m ViewModel) View() string {
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
 	helpLine := m.renderBottomHelp()
+	baseMain := mainPanes
 	if m.ModalOpen && !m.VersionFromMain {
 		installView := m.renderInstallModal()
 		installBase := installView
@@ -1122,7 +1130,7 @@ func (m ViewModel) View() string {
 	}
 
 	if !m.ModalOpen && !m.ActionModalOpen && !m.HelpModalOpen {
-		return lipgloss.JoinVertical(lipgloss.Left, mainPanes, helpLine)
+		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
 	modalBase := stripANSI(baseMain)
@@ -1131,7 +1139,7 @@ func (m ViewModel) View() string {
 			managerModal := m.renderManagerModal()
 			managerX, managerY := centeredOverlayPosition(managerModal, m.Width, m.Height)
 			modalBase = overlayAt(modalBase, managerModal, managerX, managerY)
-		} else {
+		} else if !m.VersionFromMain {
 			installModal := m.renderInstallModal()
 			installX, installY := centeredOverlayPosition(installModal, m.Width, m.Height)
 			modalBase = overlayAt(modalBase, installModal, installX, installY)
@@ -1951,6 +1959,9 @@ func (m ViewModel) renderScrollableDetails(lines []string, width int, rows int) 
 	for _, line := range lines {
 		flat = append(flat, strings.Split(line, "\n")...)
 	}
+	for i := range flat {
+		flat[i] = clampLineToWidth(flat[i], width)
+	}
 
 	maxScroll := 0
 	if len(flat) > rows {
@@ -1969,10 +1980,7 @@ func (m ViewModel) renderScrollableDetails(lines []string, width int, rows int) 
 		end = len(flat)
 	}
 
-	out := append([]string{}, flat[start:end]...)
-	for len(out) < rows {
-		out = append(out, "")
-	}
+	out := normalizeViewportLines(flat[start:end], width, rows)
 
 	return strings.Join(out, "\n"), len(flat), start
 }
@@ -2051,19 +2059,32 @@ func readmeMarkdownPreview(markdown string) (string, bool) {
 	if md == "" {
 		return "", false
 	}
-	if modalWidth > m.Width-2 {
-		modalWidth = m.Width - 2
+	if len(md) <= readmePreviewMaxChars {
+		return md, false
+	}
+
+	cutoff := strings.LastIndex(md[:readmePreviewMaxChars], "\n")
+	if cutoff < readmePreviewMaxChars/2 {
+		cutoff = readmePreviewMaxChars
+	}
+	return strings.TrimSpace(md[:cutoff]), true
+}
+
+func (m ViewModel) renderInstallModal() string {
+	modalWidth := m.Width - 2
+	if modalWidth < 40 {
+		modalWidth = 40
 	}
 	if modalWidth%2 == 0 && modalWidth > 40 {
 		modalWidth--
 	}
 
-	modalHeight := int(float64(m.Height) * 0.7)
+	modalHeight := m.Height - 2
 	if modalHeight < 10 {
 		modalHeight = 10
 	}
-	if modalHeight > m.Height-2 {
-		modalHeight = m.Height - 2
+	if modalHeight > m.Height-1 {
+		modalHeight = m.Height - 1
 	}
 	innerHeight := modalHeight - 2
 	if innerHeight < 1 {
@@ -2180,7 +2201,8 @@ func (m ViewModel) renderInstallPackageInfoPanel(width int, rows int) string {
 	lines := []string{title, ""}
 	if strings.TrimSpace(name) == "" {
 		lines = append(lines, muted.Render("Type a package name or pick a suggestion."))
-		return renderFixedLines(lines, width, rows)
+		panelStyle := lipgloss.NewStyle().Width(width).Height(rows)
+		return panelStyle.Render(renderFixedLines(lines, width, rows))
 	}
 
 	lines = append(lines,
@@ -2224,15 +2246,44 @@ func renderFixedLines(lines []string, width int, rows int) string {
 		flat = append(flat, strings.Split(line, "\n")...)
 	}
 
-	if len(flat) > rows {
-		flat = flat[:rows]
+	flat = normalizeViewportLines(flat, width, rows)
+
+	return strings.Join(flat, "\n")
+}
+
+func normalizeViewportLines(lines []string, width int, rows int) []string {
+	if width < 1 {
+		width = 1
+	}
+	if rows < 1 {
+		rows = 1
+	}
+
+	clamped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		clamped = append(clamped, clampLineToWidth(line, width))
+	}
+
+	if len(clamped) > rows {
+		clamped = clamped[:rows]
 	} else {
-		for len(flat) < rows {
-			flat = append(flat, "")
+		for len(clamped) < rows {
+			clamped = append(clamped, "")
 		}
 	}
 
-	return strings.Join(flat, "\n")
+	return clamped
+}
+
+func clampLineToWidth(line string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	visible := stripANSI(line)
+	if lipgloss.Width(visible) <= width {
+		return line
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(line)
 }
 
 func (m ViewModel) installSelectedPackageName() string {
@@ -2324,13 +2375,7 @@ func (m ViewModel) renderManagerModal() string {
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
-	if len(body) > innerHeight {
-		body = body[:innerHeight]
-	} else {
-		for len(body) < innerHeight {
-			body = append(body, "")
-		}
-	}
+	body = normalizeViewportLines(body, modalWidth-2, innerHeight)
 
 	return modalStyle.Render(strings.Join(body, "\n"))
 }
@@ -2379,6 +2424,17 @@ func (m ViewModel) renderVersionModal() string {
 	}
 	if modalHeight < 3 {
 		modalHeight = 3
+	}
+
+	if !m.VersionFromMain {
+		modalWidth = m.Width - 2
+		if modalWidth < 16 {
+			modalWidth = 16
+		}
+		modalHeight = m.Height - 2
+		if modalHeight < 3 {
+			modalHeight = 3
+		}
 	}
 
 	modalStyle := lipgloss.NewStyle().
@@ -2472,13 +2528,13 @@ func (m ViewModel) renderVersionModal() string {
 
 	if m.VersionLoading {
 		versionLines = append(versionLines,
-			lipgloss.NewStyle().Foreground(reqVenvColor).Render("Loading versions..."),
+			lipgloss.NewStyle().Foreground(reqVenvColor).Render(" "+TruncateText("Loading versions...", max(1, listContentWidth-1))),
 		)
 	} else if len(m.VersionsList) == 0 {
-		versionLines = append(versionLines, muted.Render("No versions found"))
+		versionLines = append(versionLines, muted.Render(" "+TruncateText("No versions found", max(1, listContentWidth-1))))
 	} else {
 		for i := start; i < end; i++ {
-			line := TruncateText(m.VersionsList[i], listContentWidth)
+			line := " " + TruncateText(m.VersionsList[i], max(1, listContentWidth-1))
 			if i == m.VersionSelected {
 				line = selectedStyle.Render(line)
 			}
@@ -2516,7 +2572,7 @@ func (m ViewModel) renderVersionModal() string {
 			if i >= thumbPos && i < thumbPos+thumbHeight {
 				ch = thumbStyle.Render("█")
 			}
-			versionLines[i] = line + strings.Repeat(" ", pad) + " " + ch
+			versionLines[i] = line + strings.Repeat(" ", pad) + ch
 		}
 	}
 
@@ -2535,10 +2591,7 @@ func (m ViewModel) renderVersionModal() string {
 	for _, line := range body {
 		flat = append(flat, strings.Split(line, "\n")...)
 	}
-
-	if len(flat) > innerHeight {
-		flat = flat[:innerHeight]
-	}
+	flat = normalizeViewportLines(flat, modalWidth-2, innerHeight)
 
 	return modalStyle.Render(strings.Join(flat, "\n"))
 }
@@ -2607,13 +2660,7 @@ func (m ViewModel) renderActionModal() string {
 	if innerHeight < 1 {
 		innerHeight = 1
 	}
-	if len(lines) > innerHeight {
-		lines = lines[:innerHeight]
-	} else {
-		for len(lines) < innerHeight {
-			lines = append(lines, "")
-		}
-	}
+	lines = normalizeViewportLines(lines, modalWidth-2, innerHeight)
 
 	return modalStyle.Render(strings.Join(lines, "\n"))
 }
@@ -2651,6 +2698,15 @@ func (m ViewModel) renderHelpModal() string {
 	}
 
 	modalHeight := min(max(10, len(rows)+2), max(10, m.Height-2))
+	innerWidth := modalWidth - 6
+	if innerWidth < 1 {
+		innerWidth = 1
+	}
+	innerHeight := modalHeight - 4
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	rows = normalizeViewportLines(rows, innerWidth, innerHeight)
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -2775,10 +2831,6 @@ func (m ViewModel) renderBottomHelp() string {
 		lipgloss.NewStyle().Foreground(reqValueColor).Render("package manager:"),
 		lipgloss.NewStyle().Render(" "),
 		lipgloss.NewStyle().Foreground(reqKeyColor).Render(m.currentManagerKey()),
-		lipgloss.NewStyle().Render("  "),
-		lipgloss.NewStyle().Foreground(reqGlobalColor).Render("global"),
-		lipgloss.NewStyle().Render(" / "),
-		lipgloss.NewStyle().Foreground(reqVenvColor).Render("venv"),
 	)
 	spacer := lipgloss.NewStyle().Width(max(0, m.Width-lipgloss.Width(leftLegend)-lipgloss.Width(rightLegend))).Render("")
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer, rightLegend)
