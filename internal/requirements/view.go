@@ -2,6 +2,7 @@ package requirements
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -66,6 +68,13 @@ type ViewModel struct {
 
 	LogText string
 	LogKind logKind
+
+	SelectedMeta        *Result
+	SelectedMetaLoading bool
+	SelectedMetaErr     string
+	DetailsScroll       int
+	FocusedPane         int // 0 = list, 1 = details
+	metaCache           map[string]Result
 }
 
 type listLoadedMsg struct {
@@ -90,8 +99,9 @@ type installDoneMsg struct {
 }
 
 type freezeDoneMsg struct {
-	FilePath string
-	Err      error
+	FilePath  string
+	Err       error
+	ShowModal bool
 }
 
 type installFromFileDoneMsg struct {
@@ -99,7 +109,15 @@ type installFromFileDoneMsg struct {
 	Err      error
 }
 
+type packageMetaLoadedMsg struct {
+	Name string
+	Meta Result
+	Err  error
+}
+
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+var glowRenderCache = map[string]string{}
+var glamourRendererCache = map[int]*glamour.TermRenderer{}
 
 func NewViewModel() ViewModel {
 	installInput := textinput.New()
@@ -117,6 +135,7 @@ func NewViewModel() ViewModel {
 		InstallInput:   installInput,
 		LogText:        logText,
 		LogKind:        logLoading,
+		metaCache:      map[string]Result{},
 	}
 }
 
@@ -154,6 +173,10 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 			m.Packages = nil
 			m.Selected = 0
 			m.Scroll = 0
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = ""
+			m.SelectedMetaLoading = false
+			m.DetailsScroll = 0
 			m.setLog(logError, "Failed to load installed packages: "+msg.Err.Error())
 			return m, nil
 		}
@@ -162,6 +185,10 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		if len(m.Packages) == 0 {
 			m.Selected = 0
 			m.Scroll = 0
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = ""
+			m.SelectedMetaLoading = false
+			m.DetailsScroll = 0
 		} else {
 			if m.Selected >= len(m.Packages) {
 				m.Selected = len(m.Packages) - 1
@@ -172,6 +199,10 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 			m.ensureMainSelectionVisible(m.visibleMainRows())
 		}
 		m.setLog(logSuccess, fmt.Sprintf("Installed packages loaded: %d", len(m.Packages)))
+		if len(m.Packages) > 0 {
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
+		}
 		return m, nil
 	case uninstallDoneMsg:
 		m.BusyAction = false
@@ -182,9 +213,14 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		}
 
 		m.showActionModalResult(logSuccess, "Uninstall completed", "Removed: "+msg.Name)
-		m.setLog(logSuccess, fmt.Sprintf("Uninstalled %s", msg.Name))
+		m.setLog(logSuccess, fmt.Sprintf("Uninstalled %s (auto-freeze running)", msg.Name))
 		m.LoadingList = true
-		return m, m.loadInstalledCmd()
+		freezePath, freezeErr := requirementsOutputPath()
+		if freezeErr != nil {
+			m.setLog(logError, "Auto-freeze failed: "+freezeErr.Error())
+			return m, m.loadInstalledCmd()
+		}
+		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false))
 	case searchSuggestionsDoneMsg:
 		if strings.TrimSpace(msg.Query) != strings.TrimSpace(m.ModalLastQuery) {
 			return m, nil
@@ -215,17 +251,26 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		}
 
 		m.closeModal()
-		m.setLog(logSuccess, fmt.Sprintf("Installed %s", msg.Name))
+		m.setLog(logSuccess, fmt.Sprintf("Installed %s (auto-freeze running)", msg.Name))
 		m.LoadingList = true
-		return m, m.loadInstalledCmd()
+		freezePath, freezeErr := requirementsOutputPath()
+		if freezeErr != nil {
+			m.setLog(logError, "Auto-freeze failed: "+freezeErr.Error())
+			return m, m.loadInstalledCmd()
+		}
+		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false))
 	case freezeDoneMsg:
 		m.BusyAction = false
 		if msg.Err != nil {
-			m.showActionModalResult(logError, "Freeze failed", msg.Err.Error())
+			if msg.ShowModal {
+				m.showActionModalResult(logError, "Freeze failed", msg.Err.Error())
+			}
 			m.setLog(logError, "Freeze failed: "+msg.Err.Error())
 			return m, nil
 		}
-		m.showActionModalResult(logSuccess, "Freeze completed", "Updated: "+msg.FilePath)
+		if msg.ShowModal {
+			m.showActionModalResult(logSuccess, "Freeze completed", "Updated: "+msg.FilePath)
+		}
 		m.setLog(logSuccess, fmt.Sprintf("requirements.txt updated: %s", msg.FilePath))
 		return m, nil
 	case installFromFileDoneMsg:
@@ -239,6 +284,24 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		m.setLog(logSuccess, fmt.Sprintf("Installed from %s", msg.FilePath))
 		m.LoadingList = true
 		return m, m.loadInstalledCmd()
+	case packageMetaLoadedMsg:
+		selectedName := m.selectedPackageName()
+		if msg.Name == "" || selectedName == "" || !strings.EqualFold(strings.TrimSpace(selectedName), strings.TrimSpace(msg.Name)) {
+			return m, nil
+		}
+
+		m.SelectedMetaLoading = false
+		if msg.Err != nil {
+			m.SelectedMeta = nil
+			m.SelectedMetaErr = msg.Err.Error()
+			return m, nil
+		}
+
+		m.metaCache[strings.ToLower(strings.TrimSpace(msg.Name))] = msg.Meta
+		meta := msg.Meta
+		m.SelectedMeta = &meta
+		m.SelectedMetaErr = ""
+		return m, nil
 	}
 
 	return m, nil
@@ -246,16 +309,39 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 
 func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	switch msg.Type {
+	case tea.KeyLeft:
+		m.FocusedPane = 0
+		return m, nil
+	case tea.KeyRight:
+		m.FocusedPane = 1
+		return m, nil
 	case tea.KeyUp, tea.KeyCtrlP:
+		if m.FocusedPane == 1 {
+			m.DetailsScroll -= 3
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
+			}
+			return m, nil
+		}
 		if m.Selected > 0 {
 			m.Selected--
 			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyDown, tea.KeyCtrlN:
+		if m.FocusedPane == 1 {
+			m.DetailsScroll += 3
+			return m, nil
+		}
 		if m.Selected < len(m.Packages)-1 {
 			m.Selected++
 			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			m, cmd := m.beginSelectedPackageMetaLoad()
+			return m, cmd
 		}
 		return m, nil
 	case tea.KeyPgUp:
@@ -268,7 +354,9 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.Selected = 0
 		}
 		m.ensureMainSelectionVisible(m.visibleMainRows())
-		return m, nil
+		m.DetailsScroll = 0
+		m, cmd := m.beginSelectedPackageMetaLoad()
+		return m, cmd
 	case tea.KeyPgDown:
 		step := m.visibleMainRows()
 		if step < 1 {
@@ -282,7 +370,9 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			}
 		}
 		m.ensureMainSelectionVisible(m.visibleMainRows())
-		return m, nil
+		m.DetailsScroll = 0
+		m, cmd := m.beginSelectedPackageMetaLoad()
+		return m, cmd
 	case tea.KeyRunes:
 		if len(msg.Runes) != 1 {
 			return m, nil
@@ -293,12 +383,30 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			if m.Selected < len(m.Packages)-1 {
 				m.Selected++
 				m.ensureMainSelectionVisible(m.visibleMainRows())
+				m.DetailsScroll = 0
+				m, cmd := m.beginSelectedPackageMetaLoad()
+				return m, cmd
 			}
 			return m, nil
 		case 'k', 'K':
 			if m.Selected > 0 {
 				m.Selected--
 				m.ensureMainSelectionVisible(m.visibleMainRows())
+				m.DetailsScroll = 0
+				m, cmd := m.beginSelectedPackageMetaLoad()
+				return m, cmd
+			}
+			return m, nil
+		case 'u':
+			m.DetailsScroll -= 4
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
+			}
+			return m, nil
+		case 'U':
+			m.DetailsScroll -= 12
+			if m.DetailsScroll < 0 {
+				m.DetailsScroll = 0
 			}
 			return m, nil
 		case 'i', 'I':
@@ -345,7 +453,7 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.BusyAction = true
 			m.showActionModalLoading("Freeze requirements", "Running pip freeze into requirements.txt...")
 			m.setLog(logLoading, "Running freeze to requirements.txt...")
-			return m, m.freezeCmd(freezePath)
+			return m, m.freezeCmd(freezePath, true)
 		case 'r', 'R':
 			if m.BusyAction || m.LoadingList {
 				return m, nil
@@ -369,15 +477,12 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 func (m ViewModel) updateMainMouse(msg tea.MouseMsg) (ViewModel, tea.Cmd) {
 	switch msg.Type {
 	case tea.MouseWheelUp:
-		if m.Selected > 0 {
-			m.Selected--
-			m.ensureMainSelectionVisible(m.visibleMainRows())
+		m.DetailsScroll--
+		if m.DetailsScroll < 0 {
+			m.DetailsScroll = 0
 		}
 	case tea.MouseWheelDown:
-		if m.Selected < len(m.Packages)-1 {
-			m.Selected++
-			m.ensureMainSelectionVisible(m.visibleMainRows())
-		}
+		m.DetailsScroll++
 	}
 
 	return m, nil
@@ -547,14 +652,22 @@ func (m ViewModel) View() string {
 		rightWidth = 10
 	}
 
+	leftBorderColor := reqMutedColor
+	rightBorderColor := reqMutedColor
+	if m.FocusedPane == 0 {
+		leftBorderColor = reqTitleColor
+	} else {
+		rightBorderColor = reqTitleColor
+	}
+
 	leftStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(reqTitleColor).
+		BorderForeground(leftBorderColor).
 		Width(leftWidth).
 		Height(bodyHeight - 2)
 	rightStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(reqTitleColor).
+		BorderForeground(rightBorderColor).
 		Width(rightWidth).
 		Height(bodyHeight - 2)
 
@@ -564,7 +677,20 @@ func (m ViewModel) View() string {
 	}
 
 	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, listRows))
-	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
+	if len(m.Packages) > listRows {
+		leftPane = overlayScrollbarOnBorder(leftPane, len(m.Packages), m.Scroll, listRows)
+	}
+
+	rightRows := bodyHeight - 4
+	if rightRows < 4 {
+		rightRows = 4
+	}
+	detailContent, detailTotal, detailScroll := m.renderPackageDetails(rightWidth-4, rightRows)
+	rightPane := rightStyle.Render(detailContent)
+	if detailTotal > rightRows {
+		rightPane = overlayScrollbarOnBorder(rightPane, detailTotal, detailScroll, rightRows)
+	}
+
 	mainPanes := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
 	baseMain := mainPanes
@@ -743,13 +869,13 @@ func (m ViewModel) installCmd(name string) tea.Cmd {
 	}
 }
 
-func (m ViewModel) freezeCmd(filePath string) tea.Cmd {
+func (m ViewModel) freezeCmd(filePath string, showModal bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		err := m.PackageManager.Freeze(ctx, filePath)
-		return freezeDoneMsg{FilePath: filePath, Err: err}
+		return freezeDoneMsg{FilePath: filePath, Err: err, ShowModal: showModal}
 	}
 }
 
@@ -761,6 +887,59 @@ func (m ViewModel) installFromFileCmd(filePath string) tea.Cmd {
 		err := m.PackageManager.InstallFromFile(ctx, filePath)
 		return installFromFileDoneMsg{FilePath: filePath, Err: err}
 	}
+}
+
+func (m ViewModel) beginSelectedPackageMetaLoad() (ViewModel, tea.Cmd) {
+	name := m.selectedPackageName()
+	if name == "" {
+		m.SelectedMeta = nil
+		m.SelectedMetaErr = ""
+		m.SelectedMetaLoading = false
+		return m, nil
+	}
+	cacheKey := strings.ToLower(strings.TrimSpace(name))
+	if cached, ok := m.metaCache[cacheKey]; ok {
+		meta := cached
+		m.SelectedMeta = &meta
+		m.SelectedMetaErr = ""
+		m.SelectedMetaLoading = false
+		return m, nil
+	}
+
+	m.SelectedMeta = nil
+	m.SelectedMetaErr = ""
+	m.SelectedMetaLoading = true
+
+	cmd := func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		type metaRes struct {
+			meta Result
+			err  error
+		}
+		ch := make(chan metaRes, 1)
+		go func() {
+			meta, err := fetchPackageMetadata(name)
+			ch <- metaRes{meta: meta, err: err}
+		}()
+
+		select {
+		case <-ctx.Done():
+			return packageMetaLoadedMsg{Name: name, Err: ctx.Err()}
+		case res := <-ch:
+			return packageMetaLoadedMsg{Name: name, Meta: res.meta, Err: res.err}
+		}
+	}
+
+	return m, cmd
+}
+
+func (m ViewModel) selectedPackageName() string {
+	if len(m.Packages) == 0 || m.Selected < 0 || m.Selected >= len(m.Packages) {
+		return ""
+	}
+	return strings.TrimSpace(m.Packages[m.Selected].Name)
 }
 
 func requirementsOutputPath() (string, error) {
@@ -908,9 +1087,12 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (m ViewModel) renderPackageDetails(width int) string {
+func (m ViewModel) renderPackageDetails(width int, rows int) (string, int, int) {
 	if width < 10 {
 		width = 10
+	}
+	if rows < 4 {
+		rows = 4
 	}
 
 	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Package Details")
@@ -918,10 +1100,10 @@ func (m ViewModel) renderPackageDetails(width int) string {
 	accent := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
 	if m.LoadingList {
-		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n"), 0, 0
 	}
 	if len(m.Packages) == 0 || m.Selected < 0 || m.Selected >= len(m.Packages) {
-		return strings.Join([]string{header, "", muted.Render("No package selected.")}, "\n")
+		return strings.Join([]string{header, "", muted.Render("No package selected.")}, "\n"), 0, 0
 	}
 
 	dep := m.Packages[m.Selected]
@@ -938,7 +1120,130 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		WrapText(version, width),
 	}
 
-	return strings.Join(lines, "\n")
+	if m.SelectedMetaLoading {
+		lines = append(lines, "", muted.Render("Loading package metadata from PyPI..."))
+		return m.renderScrollableDetails(lines, width, rows)
+	}
+
+	if m.SelectedMetaErr != "" {
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().Foreground(reqVersionColor).Render("Metadata unavailable"),
+			WrapText(m.SelectedMetaErr, width),
+		)
+		return m.renderScrollableDetails(lines, width, rows)
+	}
+
+	if m.SelectedMeta != nil {
+		summary := strings.TrimSpace(m.SelectedMeta.Description)
+		if summary != "" {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(reqKeyColor).Render("Summary"), WrapText(summary, width))
+		}
+		if strings.TrimSpace(m.SelectedMeta.Readme) != "" {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(reqKeyColor).Render("README"), m.renderMarkdownWithGlamour(m.SelectedMeta.Readme, width))
+		}
+	}
+
+	return m.renderScrollableDetails(lines, width, rows)
+}
+
+func (m ViewModel) renderScrollableDetails(lines []string, width int, rows int) (string, int, int) {
+	flat := make([]string, 0, len(lines))
+	for _, line := range lines {
+		flat = append(flat, strings.Split(line, "\n")...)
+	}
+
+	maxScroll := 0
+	if len(flat) > rows {
+		maxScroll = len(flat) - rows
+	}
+	if m.DetailsScroll < 0 {
+		m.DetailsScroll = 0
+	}
+	if m.DetailsScroll > maxScroll {
+		m.DetailsScroll = maxScroll
+	}
+
+	start := m.DetailsScroll
+	end := start + rows
+	if end > len(flat) {
+		end = len(flat)
+	}
+
+	out := append([]string{}, flat[start:end]...)
+	for len(out) < rows {
+		out = append(out, "")
+	}
+
+	return strings.Join(out, "\n"), len(flat), start
+}
+
+func (m ViewModel) renderMarkdownWithGlamour(markdown string, width int) string {
+	md := strings.TrimSpace(markdown)
+	if md == "" {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+
+	h := sha1.Sum([]byte(md))
+	cacheKey := fmt.Sprintf("%d:%x", width, h)
+	if cached, ok := glowRenderCache[cacheKey]; ok {
+		return cached
+	}
+
+	renderer, err := getGlamourRenderer(width)
+	if err != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+	rendered, renderErr := renderer.Render(md)
+	if renderErr != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+
+	rendered = strings.TrimRight(rendered, "\n")
+	if strings.TrimSpace(rendered) == "" {
+		rendered = wrapMarkdownFallback(md, width)
+	}
+	glowRenderCache[cacheKey] = rendered
+	return rendered
+}
+
+func getGlamourRenderer(width int) (*glamour.TermRenderer, error) {
+	if width < 20 {
+		width = 20
+	}
+	if cached, ok := glamourRendererCache[width]; ok {
+		return cached, nil
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return nil, err
+	}
+	glamourRendererCache[width] = renderer
+	return renderer, nil
+}
+
+func wrapMarkdownFallback(markdown string, width int) string {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		if strings.TrimSpace(trimmed) == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, strings.Split(WrapText(trimmed, width), "\n")...)
+	}
+	return strings.Join(out, "\n")
 }
 
 func (m ViewModel) renderInstallModal() string {
@@ -1129,6 +1434,7 @@ func (m ViewModel) renderHelpModal() string {
 		key.Render("d") + detail.Render("  uninstall selected package"),
 		key.Render("j/k or ↑/↓") + detail.Render("  move in package list"),
 		key.Render("PgUp/PgDown") + detail.Render("  jump in package list"),
+		key.Render("Ctrl+U/Ctrl+D") + detail.Render("  scroll details/readme"),
 		key.Render("Esc") + detail.Render("  return to menu"),
 		key.Render("q") + detail.Render("  quit app"),
 		"",

@@ -19,12 +19,18 @@ type Result struct {
 	Name        string
 	Version     string
 	Description string
+	Readme      string
 	URL         string
 }
 
 type DoneMsg struct {
 	Results []Result
 	Err     error
+}
+
+type DescriptionLoadedMsg struct {
+	Index  int
+	Result Result
 }
 
 type packageNameEntry struct {
@@ -51,6 +57,16 @@ func Search(query string) tea.Cmd {
 	return func() tea.Msg {
 		results, err := fetchResults(query)
 		return DoneMsg{Results: results, Err: err}
+	}
+}
+
+func FetchDescription(index int, name string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := fetchPackageMetadata(name)
+		if err != nil {
+			return DescriptionLoadedMsg{Index: index, Result: Result{Name: name, Description: "Metadata unavailable."}}
+		}
+		return DescriptionLoadedMsg{Index: index, Result: result}
 	}
 }
 
@@ -84,16 +100,10 @@ func fetchResults(query string) ([]Result, error) {
 
 	results := make([]Result, 0, limit)
 	for i := 0; i < limit; i++ {
-		metadata, err := fetchPackageMetadata(scored[i].entry.Name)
-		if err != nil {
-			results = append(results, Result{
-				Name:        scored[i].entry.Name,
-				URL:         scored[i].entry.URL,
-				Description: "Metadata unavailable.",
-			})
-			continue
-		}
-		results = append(results, metadata)
+		results = append(results, Result{
+			Name: scored[i].entry.Name,
+			URL:  scored[i].entry.URL,
+		})
 	}
 
 	return results, nil
@@ -166,6 +176,7 @@ func fetchPackageMetadata(name string) (Result, error) {
 		Info struct {
 			Version     string            `json:"version"`
 			Summary     string            `json:"summary"`
+			Description string            `json:"description"`
 			ProjectURL  string            `json:"package_url"`
 			ReleaseURL  string            `json:"release_url"`
 			ProjectURLs map[string]string `json:"project_urls"`
@@ -185,10 +196,13 @@ func fetchPackageMetadata(name string) (Result, error) {
 		projectURL = "https://pypi.org/project/" + url.PathEscape(name) + "/"
 	}
 
+	readme := strings.TrimSpace(payload.Info.Description)
+
 	return Result{
 		Name:        name,
 		Version:     payload.Info.Version,
 		Description: strings.TrimSpace(payload.Info.Summary),
+		Readme:      readme,
 		URL:         projectURL,
 	}, nil
 }

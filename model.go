@@ -35,14 +35,17 @@ type model struct {
 	requirements  requirements.ViewModel
 
 	// Packages screen
-	input    textinput.Model
-	width    int
-	height   int
-	query    string
-	results  []searchResult
-	selected int
-	loading  bool
-	err      error
+	input        textinput.Model
+	width        int
+	height       int
+	query        string
+	results      []searchResult
+	selected     int
+	listScroll   int
+	detailScroll int
+	focusedPane  int // 0 = list, 1 = detail
+	loading      bool
+	err          error
 
 	// Requirements screen
 	installedPackages []pm.Dependency
@@ -309,15 +312,43 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.results) > 0 {
 			switch msg.Type {
+			case tea.KeyLeft:
+				m.focusedPane = 0
+				return m, nil
+			case tea.KeyRight:
+				m.focusedPane = 1
+				return m, nil
 			case tea.KeyUp, tea.KeyCtrlP:
-				if m.selected > 0 {
-					m.selected--
+				if m.focusedPane == 0 {
+					if m.selected > 0 {
+						m.selected--
+						m.detailScroll = 0
+					}
+				} else {
+					m.detailScroll -= 3
+					if m.detailScroll < 0 {
+						m.detailScroll = 0
+					}
 				}
 				return m, nil
 			case tea.KeyDown, tea.KeyCtrlN:
-				if m.selected < len(m.results)-1 {
-					m.selected++
+				if m.focusedPane == 0 {
+					if m.selected < len(m.results)-1 {
+						m.selected++
+						m.detailScroll = 0
+					}
+				} else {
+					m.detailScroll += 3
 				}
+				return m, nil
+			case tea.KeyCtrlU:
+				m.detailScroll -= 5
+				if m.detailScroll < 0 {
+					m.detailScroll = 0
+				}
+				return m, nil
+			case tea.KeyCtrlD:
+				m.detailScroll += 5
 				return m, nil
 			}
 		}
@@ -328,19 +359,35 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.results = nil
 				m.err = nil
 				m.loading = false
+				m.detailScroll = 0
 				return m, nil
 			}
 
 			m.query = query
 			m.loading = true
 			m.err = nil
+			m.detailScroll = 0
+			m.listScroll = 0
+			m.focusedPane = 0
 			return m, requirements.Search(query)
 		}
 	case tea.MouseMsg:
+		if msg.Type == tea.MouseWheelUp {
+			m.detailScroll--
+			if m.detailScroll < 0 {
+				m.detailScroll = 0
+			}
+			return m, nil
+		}
+		if msg.Type == tea.MouseWheelDown {
+			m.detailScroll++
+			return m, nil
+		}
 		if msg.Type == tea.MouseLeft && len(m.results) > 0 {
 			index := msg.Y - resultMouseStartLine
 			if index >= 0 && index < len(m.results) {
 				m.selected = index
+				m.detailScroll = 0
 			}
 			return m, nil
 		}
@@ -350,12 +397,26 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.Err
 			m.results = nil
 			m.selected = 0
+			m.detailScroll = 0
 			return m, nil
 		}
 
 		m.err = nil
 		m.results = msg.Results
 		m.selected = 0
+		m.listScroll = 0
+		m.detailScroll = 0
+		m.focusedPane = 0
+		cmds := make([]tea.Cmd, len(msg.Results))
+		for i, r := range msg.Results {
+			cmds[i] = requirements.FetchDescription(i, r.Name)
+		}
+		return m, tea.Batch(cmds...)
+
+	case requirements.DescriptionLoadedMsg:
+		if msg.Index >= 0 && msg.Index < len(m.results) {
+			m.results[msg.Index] = msg.Result
+		}
 		return m, nil
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
