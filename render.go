@@ -346,7 +346,7 @@ func renderCheatScreen(m model) string {
 		Bold(true).
 		Foreground(lipgloss.Color("33"))
 
-	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
+	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("180"))
 
 	// Search input area
 	// Width(N)+Border+Padding(1): en lipgloss el Padding se suma al contenido interno.
@@ -453,60 +453,36 @@ func renderCheatScreen(m model) string {
 	} else {
 		detailLines = append(detailLines, metaStyle.Render("No command selected"))
 	}
+	detailLines = append(detailLines, "\t")
+	// Agregar serpiente decorativa en el panel de detalles
+	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
 
-	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
-snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-maxSnekLines := (contentHeight - len(detailLines)) - 2
-panelInner := detailsWidth - 4
+	// Filtrar líneas vacías
+	var filteredSnekLines []string
+	for _, line := range snekLines {
+		if strings.TrimSpace(line) != "" {
+			filteredSnekLines = append(filteredSnekLines, line)
+		}
+	}
 
-snekMaxWidth := 0
-for _, sl := range snekLines {
-    if w := lipgloss.Width(sl); w > snekMaxWidth {
-        snekMaxWidth = w
-    }
-}
-
-if maxSnekLines > 0 && snekMaxWidth > 0 {
-    detailLines = append(detailLines, "")
-    for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
-        snekLine := snekLines[i]
-        lineWidth := lipgloss.Width(snekLine)
-        if lineWidth == 0 {
-            detailLines = append(detailLines, "")
-            continue
-        }
-        if lineWidth <= panelInner {
-            pad := (panelInner - lineWidth) / 2
-            snekLine = strings.Repeat(" ", pad) + snekLine
-        } else {
-            type cp struct {
-                r rune
-                x int
-            }
-            var chars []cp
-            col := 0
-            for _, r := range snekLine {
-                chars = append(chars, cp{r, col})
-                col++
-            }
-            scaledRunes := make([]rune, panelInner)
-            for j := range scaledRunes {
-                scaledRunes[j] = ' '
-            }
-            for _, c := range chars {
-                newX := 0
-                if snekMaxWidth > 1 {
-                    newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
-                }
-                if newX >= 0 && newX < panelInner {
-                    scaledRunes[newX] = c.r
-                }
-            }
-            snekLine = strings.TrimRight(string(scaledRunes), " ")
-        }
-        detailLines = append(detailLines, snekStyle.Render(snekLine))
-    }
-}
+	maxSnekLines := (contentHeight - len(detailLines)) - 2 // Dejar espacio
+	if maxSnekLines > 0 {
+		detailLines = append(detailLines, "")
+		// Agregar líneas de la serpiente
+		for i := 0; i < maxSnekLines && i < len(filteredSnekLines); i++ {
+			snekLine := filteredSnekLines[i]
+			// Truncar línea si es muy larga
+			if len(snekLine) > detailsWidth-4 {
+				snekLine = truncateText(snekLine, detailsWidth-4)
+			}
+			detailLines = append(detailLines, snekStyle.Render(snekLine))
+		}
+	} else {
+		// Si no hay espacio, solo padding normal
+		for len(detailLines) < contentHeight-1 {
+			detailLines = append(detailLines, "")
+		}
+	}
 
 	// Padding para rellenar la altura si es necesario
 	for len(detailLines) < contentHeight-1 {
