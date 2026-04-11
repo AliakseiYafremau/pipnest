@@ -305,10 +305,8 @@ func renderRequirementsScreen(m model) string {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33")).
-		MarginBottom(1)
+	return body
+}
 
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	selectedStyle := lipgloss.NewStyle().

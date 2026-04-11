@@ -93,7 +93,7 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.requirements.Init()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -157,9 +157,17 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			selectedItem := MainMenuItems[m.menuCursor]
 			m.currentScreen = selectedItem.Target
 			m.menuCursor = 0
+
+			if m.currentScreen == ScreenRequirements {
+				var cmd tea.Cmd
+				m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+				return m, cmd
+			}
+
 			if m.currentScreen == ScreenPackages {
 				m.input.Focus()
 			}
+
 			if m.currentScreen == ScreenRequirements {
 				// Cargar lista de paquetes
 				m.reqLoading = true
@@ -167,6 +175,7 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadInstalledPackages(m.packageManager)
 				m.requirements.Input.Focus()
 			}
+
 			if m.currentScreen == ScreenCheatSheet {
 				m.cheatSearch.Focus()
 				m.cheatSelected = 0
