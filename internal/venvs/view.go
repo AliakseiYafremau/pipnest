@@ -2,7 +2,6 @@ package venvs
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -42,7 +41,7 @@ func (m ViewModel) View() string {
 	}
 
 	title := labelStyle.Render("Interprete actual")
-	contentStyle := styleForInterpreter(kind)
+	contentStyle := StyleForInterpreter(kind)
 	content := fmt.Sprintf("%s\n%s", title, contentStyle.Render(interpreter))
 	innerWidth := lipgloss.Width(interpreter)
 	titleWidth := lipgloss.Width("Interprete actual")
@@ -67,7 +66,8 @@ func (m ViewModel) View() string {
 	return lipgloss.Place(m.Width, m.Height, lipgloss.Center, lipgloss.Center, box)
 }
 
-func styleForInterpreter(kind InterpreterKind) lipgloss.Style {
+// StyleForInterpreter returns the lipgloss style for the given interpreter kind.
+func StyleForInterpreter(kind InterpreterKind) lipgloss.Style {
 	switch kind {
 	case InterpreterVenv, InterpreterConda:
 		return virtualEnvStyle
@@ -77,11 +77,12 @@ func styleForInterpreter(kind InterpreterKind) lipgloss.Style {
 }
 
 func boxStyleForInterpreter(kind InterpreterKind) lipgloss.Style {
+	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
 	switch kind {
 	case InterpreterVenv, InterpreterConda:
-		return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#ffde57"))
+		return border.BorderForeground(lipgloss.Color("#ffde57"))
 	default:
-		return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#4B8BBE"))
+		return border.BorderForeground(lipgloss.Color("#4B8BBE"))
 	}
 }
 
@@ -109,9 +110,3 @@ func truncateLine(value string, maxWidth int) string {
 	return string(runes[:left]) + ellipsis + string(runes[len(runes)-right:])
 }
 
-func fileExists(path string) bool {
-	if _, err := os.Stat(path); err == nil {
-		return true
-	}
-	return false
-}

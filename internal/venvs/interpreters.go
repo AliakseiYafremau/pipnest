@@ -497,6 +497,11 @@ func (option InterpreterOption) installedPackages() []PackageInfo {
 	return packages
 }
 
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func formatBytes(sizeBytes int64) string {
 	units := []string{"B", "KB", "MB", "GB", "TB"}
 	value := float64(sizeBytes)

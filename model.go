@@ -116,9 +116,6 @@ func (m model) View() string {
 
 	inputHeight := topInputHeight
 	contentHeight := m.height - inputHeight - 1
-	if contentHeight < 4 {
-		contentHeight = 4
-	}
 	if contentHeight < 10 {
 		contentHeight = 10
 	}
