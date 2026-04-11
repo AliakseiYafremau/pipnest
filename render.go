@@ -298,11 +298,7 @@ func renderRequirementsScreen(m model) string {
 		return ""
 	}
 
-	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render("ESC to return to menu")
-
-	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+	return body
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
