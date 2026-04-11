@@ -19,6 +19,7 @@ type model struct {
 	// Navigation
 	currentScreen ScreenID
 	menuCursor    int
+	konamiIndex   int
 
 	// Packages screen
 	input    textinput.Model
@@ -35,6 +36,27 @@ type model struct {
 	cheatSelected     int
 	filteredCommands  []cheatsheet.CheatCommand
 	cheatScrollOffset int
+}
+
+var konamiSequence = []tea.KeyType{
+	tea.KeyUp,
+	tea.KeyUp,
+	tea.KeyDown,
+	tea.KeyDown,
+	tea.KeyLeft,
+	tea.KeyRight,
+	tea.KeyLeft,
+	tea.KeyRight,
+}
+
+func nextKonamiIndex(current int, key tea.KeyType) int {
+	if current < len(konamiSequence) && key == konamiSequence[current] {
+		return current + 1
+	}
+	if key == konamiSequence[0] {
+		return 1
+	}
+	return 0
 }
 
 const (
@@ -82,12 +104,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateVenvs(msg)
 	case ScreenCheatSheet:
 		return m.updateCheat(msg)
+	case ScreenEasterEgg:
+		return m.updateEasterEgg(msg)
 	}
 
 	return m, nil
 }
 
 // updateMainMenu: Lógica del menú principal
+// Easter Egg (macarrones version): Arriba, Arriba, Abajo, Abajo, Izquierda, Derecha, Izquierda, Derecha
 func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -96,14 +121,21 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.menuCursor > 0 {
 				m.menuCursor--
 			}
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
 		case tea.KeyDown:
 			if m.menuCursor < len(MainMenuItems)-1 {
 				m.menuCursor++
 			}
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
+		case tea.KeyLeft:
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
+		case tea.KeyRight:
+			m.konamiIndex = nextKonamiIndex(m.konamiIndex, msg.Type)
 		case tea.KeyEnter:
 			selectedItem := MainMenuItems[m.menuCursor]
 			m.currentScreen = selectedItem.Target
 			m.menuCursor = 0
+			m.konamiIndex = 0
 			if m.currentScreen == ScreenPackages {
 				m.input.Focus()
 			}
@@ -116,11 +148,19 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "q" {
 				return m, tea.Quit
 			}
+		default:
+			m.konamiIndex = 0
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 	}
+
+	if m.konamiIndex >= len(konamiSequence) {
+		m.currentScreen = ScreenEasterEgg
+		m.konamiIndex = 0
+	}
+
 	return m, nil
 }
 
@@ -338,6 +378,21 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyEsc {
+			m.currentScreen = ScreenMainMenu
+			m.menuCursor = 0
+			return m, nil
+		}
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+	}
+	return m, nil
+}
+
 func (m model) View() string {
 	switch m.currentScreen {
 	case ScreenMainMenu:
@@ -350,6 +405,8 @@ func (m model) View() string {
 		return renderVenvsScreen(m)
 	case ScreenCheatSheet:
 		return renderCheatScreen(m)
+	case ScreenEasterEgg:
+		return renderEasterEgg(m)
 	}
 	return ""
 }
