@@ -168,14 +168,6 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input.Focus()
 			}
 
-			if m.currentScreen == ScreenRequirements {
-				// Cargar lista de paquetes
-				m.reqLoading = true
-				m.reqErr = nil
-				return m, loadInstalledPackages(m.packageManager)
-				m.requirements.Input.Focus()
-			}
-
 			if m.currentScreen == ScreenCheatSheet {
 				m.cheatSearch.Focus()
 				m.cheatSelected = 0
