@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
@@ -87,6 +88,7 @@ type ViewModel struct {
 	VersionPackageName         string
 	VersionErrorText           string
 	VersionFromMain            bool
+	Loader                  spinner.Model
 
 	ActionModalOpen    bool
 	ActionModalLoading bool
@@ -199,6 +201,9 @@ const readmePreviewMaxChars = 12000
 func NewViewModel() ViewModel {
 	installInput := textinput.New()
 	installInput.Placeholder = "Type package name..."
+	loader := spinner.New()
+	loader.Spinner = spinner.Dot
+	loader.Style = lipgloss.NewStyle().Foreground(reqVenvColor)
 
 	pm := packagemanager.PackageManager(packagemanager.NewPipManager("pip"))
 	logText := "Loading installed packages... (pip)"
@@ -210,7 +215,6 @@ func NewViewModel() ViewModel {
 	return ViewModel{
 		PackageManager: pm,
 		InstallInput:   installInput,
-		LoadingList:    true,
 		LogText:        logText,
 		LogKind:        logLoading,
 		metaCache:      map[string]Result{},
@@ -223,6 +227,14 @@ func (m ViewModel) Init() tea.Cmd {
 
 func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if !m.InstallMetaLoading && !m.SelectedMetaLoading && !m.ModalLoadingSuggestions {
+			return m, nil
+		}
+
+		var cmd tea.Cmd
+		m.Loader, cmd = m.Loader.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		m.Width = msg.Width
 		m.Height = msg.Height
@@ -811,9 +823,9 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	m.InstallMetaLoading = false
 	searchCmd := m.searchSuggestionsCmd(after)
 	if inputCmd == nil {
-		return m, searchCmd
+		return m, tea.Batch(searchCmd, m.Loader.Tick)
 	}
-	return m, tea.Batch(inputCmd, searchCmd)
+	return m, tea.Batch(inputCmd, searchCmd, m.Loader.Tick)
 }
 
 func (m ViewModel) updateManagerModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
@@ -1447,7 +1459,15 @@ func (m ViewModel) beginInstallPackageMetaLoad(name string) (ViewModel, tea.Cmd)
 		}
 	}
 
-	return m, cmd
+	return m, tea.Batch(cmd, m.Loader.Tick)
+}
+
+func (m ViewModel) loadingLine(text string, width int) string {
+	if width < 1 {
+		width = 1
+	}
+	line := strings.TrimSpace(m.Loader.View() + " " + strings.TrimSpace(text))
+	return lipgloss.NewStyle().Foreground(reqVenvColor).Render(TruncateText(line, width))
 }
 
 func (m ViewModel) installCmd(name string) tea.Cmd {
@@ -1533,7 +1553,7 @@ func (m ViewModel) beginSelectedPackageMetaLoad() (ViewModel, tea.Cmd) {
 		}
 	}
 
-	return m, cmd
+	return m, tea.Batch(cmd, m.Loader.Tick)
 }
 
 func (m ViewModel) beginModalSuggestionMetaLoad() (ViewModel, tea.Cmd) {
@@ -1924,7 +1944,7 @@ func (m ViewModel) renderPackageDetails(width int, rows int) (string, int, int) 
 	}
 
 	if m.SelectedMetaLoading {
-		lines = append(lines, "", muted.Render("Loading package metadata from PyPI..."))
+		lines = append(lines, "", m.loadingLine("Loading README from PyPI...", width))
 		return m.renderScrollableDetails(lines, width, rows)
 	}
 
@@ -2120,7 +2140,6 @@ func (m ViewModel) renderInstallSuggestionsPanel(width int, rows int) string {
 	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
 	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
 	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
-	statusStyle := lipgloss.NewStyle().Foreground(reqGlobalColor)
 
 	lines := []string{title, inputStyle.Render(m.InstallInput.View()), ""}
 	remainingRows := rows - len(lines)
@@ -2144,7 +2163,7 @@ func (m ViewModel) renderInstallSuggestionsPanel(width int, rows int) string {
 	}
 
 	if m.ModalLoadingSuggestions {
-		lines = append(lines, statusStyle.Render("Searching suggestions..."))
+		lines = append(lines, m.loadingLine("Searching suggestions...", width))
 	} else if len(m.Suggestions) == 0 {
 		lines = append(lines, muted.Render("No suggestions"))
 	} else {
@@ -2216,7 +2235,7 @@ func (m ViewModel) renderInstallPackageInfoPanel(width int, rows int) string {
 	)
 
 	if m.InstallMetaLoading {
-		lines = append(lines, muted.Render("Loading description from PyPI..."))
+		lines = append(lines, m.loadingLine("Loading description from PyPI...", width-2))
 	} else if m.InstallMetaErr != "" {
 		lines = append(lines, warning.Render(WrapText(m.InstallMetaErr, width-2)))
 	} else if m.InstallMeta != nil && strings.EqualFold(strings.TrimSpace(m.InstallMeta.Name), strings.TrimSpace(name)) {
