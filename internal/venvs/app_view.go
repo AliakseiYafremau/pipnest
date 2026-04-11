@@ -49,6 +49,12 @@ func (m *Model) View() string {
 	if m.replModalOpen {
 		ui = m.renderREPLModal()
 	}
+	if m.runFileModalOpen {
+		ui = m.renderRunFileModal()
+	}
+	if m.keybindsModalOpen {
+		ui = m.renderKeybindsModal()
+	}
 	return strings.TrimRight(ui, "\n") + "\n" + legend
 }
 
@@ -101,23 +107,35 @@ func (m *Model) renderLeftPanel(width, height int) string {
 			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
 			end = start + availableRows
 		}
+		rows := make([]string, 0, max(0, end-start))
+		rowTextWidth := maxWidth
+		if len(m.interpreters) > availableRows && availableRows > 0 {
+			rowTextWidth = max(1, rowTextWidth-2)
+		}
 		for i := start; i < end; i++ {
 			option := m.interpreters[i]
 			label := option.Label
 			if option.Path != "" {
 				label = fmt.Sprintf("%s - %s", option.Label, option.Path)
 			}
-			label = truncateLine(label, maxWidth)
+			label = truncateLine(label, rowTextWidth)
 			var lineStyle lipgloss.Style
+			kindStyle := lipgloss.NewStyle().Foreground(accentForKind(option.Kind))
 			if i == m.selected && focused {
-				lineStyle = lipgloss.NewStyle().Reverse(true).Bold(true)
+				lineStyle = kindStyle.Reverse(true).Bold(true)
 				label = "> " + label
 			} else {
-				lineStyle = lipgloss.NewStyle()
+				lineStyle = kindStyle
 				label = "  " + label
 			}
-			lines = append(lines, lineStyle.Render(label))
+			rows = append(rows, lineStyle.Render(label))
 		}
+		if len(m.interpreters) > availableRows && availableRows > 0 {
+			trackStyle := lipgloss.NewStyle().Foreground(mutedColor)
+			thumbStyle := lipgloss.NewStyle().Foreground(uiTitleColor)
+			rows = addScrollbar(rows, availableRows, len(m.interpreters), start, rowTextWidth+2, trackStyle, thumbStyle)
+		}
+		lines = append(lines, rows...)
 	} else {
 		lines = append(lines, muted.Render(truncateLine("Press Enter to open", maxW)))
 	}
@@ -176,9 +194,6 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 	} else {
 		availableRows := packageVisibleLines(innerHeight, len(lines))
 		displayRows := availableRows
-		if len(details.Packages) > availableRows && availableRows > 1 {
-			displayRows = availableRows - 1
-		}
 		if displayRows < 0 {
 			displayRows = 0
 		}
@@ -205,6 +220,10 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 		}
 		nameWidth := packageNameColumnWidth(details.Packages, m.packageScroll, end, maxW)
 		pkgMaxW := max(1, maxW-2)
+		if len(details.Packages) > displayRows && displayRows > 0 {
+			pkgMaxW = max(1, pkgMaxW-2)
+		}
+		rows := make([]string, 0, max(0, end-m.packageScroll))
 		for i := m.packageScroll; i < end && len(lines) < innerHeight; i++ {
 			item := details.Packages[i]
 			label := truncateLine(renderPackageRow(item, nameWidth, nameStyle, versionStyle), pkgMaxW)
@@ -220,11 +239,14 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 			} else {
 				lineStyle = lipgloss.NewStyle()
 			}
-			lines = append(lines, lineStyle.Render(label))
+			rows = append(rows, lineStyle.Render(label))
 		}
-		if remaining := len(details.Packages) - end; remaining > 0 && len(lines) < innerHeight {
-			lines = append(lines, muted.Render(fmt.Sprintf("+%d more", remaining)))
+		if len(details.Packages) > displayRows && displayRows > 0 {
+			trackStyle := lipgloss.NewStyle().Foreground(mutedColor)
+			thumbStyle := lipgloss.NewStyle().Foreground(kindAccent)
+			rows = addScrollbar(rows, displayRows, len(details.Packages), m.packageScroll, pkgMaxW+2, trackStyle, thumbStyle)
 		}
+		lines = append(lines, rows...)
 	}
 
 	lines = fillToHeight(lines, innerHeight)
@@ -242,11 +264,13 @@ func (m *Model) renderLegend() string {
 	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		keyStyle.Render("Enter"), sepStyle.Render(": select"),
 		sepStyle.Render("  |  "),
-		keyStyle.Render("←/→"), sepStyle.Render(": focus"),
-		sepStyle.Render("  |  "),
 		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("r"), sepStyle.Render(": REPL"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("x"), sepStyle.Render(": run file"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("?"), sepStyle.Render(": help"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
 		sepStyle.Render("  |  "),
@@ -284,6 +308,71 @@ func (m *Model) renderREPLModal() string {
 		Width(42).
 		Render(strings.Join(lines, "\n"))
 
+	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
+}
+
+func (m *Model) renderKeybindsModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor).Render("Keybinds")
+	muted := lipgloss.NewStyle().Foreground(mutedColor)
+	key := lipgloss.NewStyle().Bold(true).Foreground(uiKeyColor)
+	detail := lipgloss.NewStyle().Foreground(uiValueColor)
+
+	rows := []string{
+		title,
+		muted.Render("Core"),
+		key.Render("Enter") + detail.Render("  select / open interpreter list"),
+		key.Render("j/k or ↑/↓") + detail.Render("  move in active list"),
+		key.Render("Mouse left") + detail.Render("  click to open/select lists"),
+		key.Render("←/→") + detail.Render("  switch focus between lists"),
+		key.Render("Esc") + detail.Render("  close list focus / return to menu"),
+		key.Render("q") + detail.Render("  quit app"),
+		"",
+		muted.Render("Secondary"),
+		key.Render("r") + detail.Render("  open Python REPL using selected interpreter"),
+		key.Render("x") + detail.Render("  run a Python file with selected interpreter"),
+		key.Render("Mouse wheel") + detail.Render("  scroll package list"),
+		"",
+		muted.Render("Close help: Esc, ?, or q"),
+	}
+
+	modalWidth := min(max(56, m.view.Width-12), 90)
+	if modalWidth < 56 {
+		modalWidth = 56
+	}
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2).
+		Width(modalWidth).
+		Render(strings.Join(rows, "\n"))
+
+	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
+}
+
+func (m *Model) renderRunFileModal() string {
+	title := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor).Render("Run File")
+	muted := lipgloss.NewStyle().Foreground(mutedColor)
+	inputStyle := lipgloss.NewStyle().Foreground(uiValueColor)
+	path := strings.TrimSpace(m.runFilePath)
+	if path == "" {
+		path = ""
+	}
+	cursorPath := path + "_"
+	rows := []string{
+		title,
+		muted.Render("Enter a Python file path to execute with selected interpreter:"),
+		inputStyle.Render(cursorPath),
+		"",
+		muted.Render("Enter: run   Esc: cancel"),
+	}
+	if m.runFileStatus != "" {
+		rows = append(rows, "", muted.Render(m.runFileStatus))
+	}
+	modalWidth := min(max(60, m.view.Width-12), 100)
+	modal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(1, 2).
+		Width(modalWidth).
+		Render(strings.Join(rows, "\n"))
 	return lipgloss.Place(m.view.Width, m.view.Height-1, lipgloss.Center, lipgloss.Center, modal)
 }
 
@@ -402,4 +491,49 @@ func renderPackageRow(item PackageInfo, nameWidth int, nameStyle, versionStyle l
 	nameCol := nameStyle.Render(name + strings.Repeat(" ", padding))
 	version := versionStyle.Render(item.Version)
 	return lipgloss.JoinHorizontal(lipgloss.Top, nameCol, "  ", version)
+}
+
+func addScrollbar(rows []string, viewport, total, offset, contentWidth int, trackStyle, thumbStyle lipgloss.Style) []string {
+	if viewport <= 0 {
+		return rows
+	}
+	out := make([]string, 0, viewport)
+	if total <= viewport {
+		for i := 0; i < viewport; i++ {
+			if i < len(rows) {
+				out = append(out, rows[i])
+			} else {
+				out = append(out, "")
+			}
+		}
+		return out
+	}
+	thumbSize := max(1, (viewport*viewport)/total)
+	if thumbSize > viewport {
+		thumbSize = viewport
+	}
+	maxStart := max(0, viewport-thumbSize)
+	thumbStart := 0
+	if total > viewport && maxStart > 0 {
+		thumbStart = (offset * maxStart) / (total - viewport)
+	}
+
+	for i := 0; i < viewport; i++ {
+		base := ""
+		if i < len(rows) {
+			base = rows[i]
+		}
+		if contentWidth > 0 {
+			pad := contentWidth - lipgloss.Width(base)
+			if pad > 0 {
+				base += strings.Repeat(" ", pad)
+			}
+		}
+		glyph := trackStyle.Render("│")
+		if i >= thumbStart && i < thumbStart+thumbSize {
+			glyph = thumbStyle.Render("█")
+		}
+		out = append(out, base+"  "+glyph)
+	}
+	return out
 }

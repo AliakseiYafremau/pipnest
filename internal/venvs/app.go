@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -26,6 +27,10 @@ type detailsLoadedMsg struct {
 	err     error
 }
 
+type fileRunFinishedMsg struct {
+	err error
+}
+
 // Model holds the full state of the venvs screen.
 type Model struct {
 	view              ViewModel
@@ -35,6 +40,10 @@ type Model struct {
 	focusPackages     bool
 	packageSelected   int
 	packageScroll     int
+	keybindsModalOpen bool
+	runFileModalOpen  bool
+	runFilePath       string
+	runFileStatus     string
 	replModalOpen     bool
 	replStatus        string
 	activationCommand string
@@ -80,12 +89,29 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.runFileModalOpen {
+			return m.handleRunFileModalKey(msg)
+		}
+		if m.keybindsModalOpen {
+			return m.handleKeybindsModalKey(msg)
+		}
 		if m.replModalOpen {
 			return m.handleReplModalKey(msg)
 		}
 		return m.handleKey(msg)
 	case tea.MouseMsg:
+		if m.keybindsModalOpen {
+			if msg.Type == tea.MouseLeft {
+				m.keybindsModalOpen = false
+			}
+			return m, nil
+		}
+		if m.runFileModalOpen {
+			return m, nil
+		}
 		switch msg.Type {
+		case tea.MouseLeft:
+			return m.handleMouseClick(msg)
 		case tea.MouseWheelUp:
 			m.scrollPackages(-1)
 			return m, nil
@@ -101,6 +127,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.replStatus = "REPL exited with error: " + msg.err.Error()
 		} else {
 			m.replStatus = "REPL closed"
+		}
+	case fileRunFinishedMsg:
+		if msg.err != nil {
+			m.runFileStatus = "Execution failed: " + msg.err.Error()
+		} else {
+			m.runFileStatus = "Execution finished"
 		}
 	case detailsLoadedMsg:
 		if msg.err == nil && msg.path == m.interpreters[m.selected].Path {
@@ -129,6 +161,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleKeybindsModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEsc || msg.String() == "?" || msg.String() == "q" {
+		m.keybindsModalOpen = false
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m *Model) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEsc:
@@ -144,6 +184,17 @@ func (m *Model) handleReplModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "?" {
+		m.keybindsModalOpen = true
+		return m, nil
+	}
+	if msg.String() == "x" {
+		m.runFileModalOpen = true
+		if m.runFilePath == "" {
+			m.runFilePath = ""
+		}
+		return m, nil
+	}
 	if msg.Type == tea.KeyCtrlC || msg.String() == "q" {
 		m.applySelection()
 		return m, tea.Quit
@@ -221,6 +272,198 @@ func (m *Model) launchSelectedREPL() tea.Cmd {
 	return tea.ExecProcess(replCmd, func(err error) tea.Msg {
 		return replFinishedMsg{err: err}
 	})
+}
+
+func (m *Model) launchSelectedFile(path string) tea.Cmd {
+	if len(m.interpreters) == 0 || m.selected >= len(m.interpreters) {
+		return nil
+	}
+	interpreter := m.interpreters[m.selected].Path
+	if interpreter == "" || strings.TrimSpace(path) == "" {
+		return nil
+	}
+	// Keep the terminal open after execution so the user can read output,
+	// then return to the TUI after pressing Enter.
+	runCmd := exec.Command(
+		"sh",
+		"-c",
+		`"$1" "$2"; status=$?; printf "\nPress Enter to return to Pipnest..."; IFS= read -r _; exit $status`,
+		"pipnest",
+		interpreter,
+		path,
+	)
+	return tea.ExecProcess(runCmd, func(err error) tea.Msg {
+		return fileRunFinishedMsg{err: err}
+	})
+}
+
+func (m *Model) handleRunFileModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.runFileModalOpen = false
+		return m, nil
+	case tea.KeyEnter:
+		path := strings.TrimSpace(m.runFilePath)
+		if path == "" {
+			m.runFileStatus = "Provide a file path to execute"
+			return m, nil
+		}
+		m.runFileModalOpen = false
+		m.runFileStatus = ""
+		return m, m.launchSelectedFile(path)
+	case tea.KeyBackspace, tea.KeyDelete:
+		if len(m.runFilePath) > 0 {
+			m.runFilePath = m.runFilePath[:len(m.runFilePath)-1]
+		}
+		return m, nil
+	}
+	if len(msg.Runes) > 0 {
+		m.runFilePath += string(msg.Runes)
+	}
+	return m, nil
+}
+
+func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	bodyHeight := m.view.Height - 1
+	if bodyHeight < 3 {
+		bodyHeight = 3
+	}
+	x, y := msg.X, msg.Y
+	if y == m.view.Height-1 {
+		switch m.legendActionAtX(x) {
+		case "enter":
+			return m.handleEnter()
+		case "repl":
+			return m, m.launchSelectedREPL()
+		case "run-file":
+			m.runFileModalOpen = true
+			return m, nil
+		case "help":
+			m.keybindsModalOpen = true
+			return m, nil
+		case "menu":
+			if m.dropdownOpen {
+				m.dropdownOpen = false
+				m.focusPackages = false
+				return m, nil
+			}
+			if m.focusPackages {
+				m.focusPackages = false
+				return m, nil
+			}
+			return m, func() tea.Msg { return BackMsg{} }
+		case "quit":
+			m.applySelection()
+			return m, tea.Quit
+		}
+	}
+	panelHeight := bodyHeight - 1
+	if panelHeight < 1 {
+		panelHeight = 1
+	}
+	contentWidth := m.view.Width - 4
+	if contentWidth < 20 {
+		contentWidth = 20
+	}
+	leftWidth, rightWidth := splitTwoWidths(contentWidth)
+	rowWidth := leftWidth + rightWidth
+	rowX := 0
+	if m.view.Width > rowWidth {
+		rowX = (m.view.Width - rowWidth) / 2
+	}
+	if y < 0 || y >= panelHeight {
+		return m, nil
+	}
+
+	leftXStart := rowX
+	leftXEnd := rowX + leftWidth
+	rightXStart := leftXEnd
+	rightXEnd := rightXStart + rightWidth
+
+	if x >= leftXStart && x < leftXEnd {
+		if !m.dropdownOpen {
+			if len(m.interpreters) == 0 {
+				return m, nil
+			}
+			m.dropdownOpen = true
+			m.focusPackages = false
+			return m, m.queueDetailsLoad(m.interpreters[m.selected])
+		}
+		innerHeight := max(1, panelHeight-4)
+		start := 0
+		end := len(m.interpreters)
+		availableRows := innerHeight - 4
+		if availableRows < 0 {
+			availableRows = 0
+		}
+		if availableRows < len(m.interpreters) {
+			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
+			end = start + availableRows
+		}
+		rowStartY := 6 // border+padding+header lines
+		idx := start + (y - rowStartY)
+		if y >= rowStartY && idx >= start && idx < end {
+			m.selected = idx
+			m.applySelection()
+			m.dropdownOpen = false
+			m.focusPackages = false
+			return m, m.queueDetailsLoad(m.interpreters[m.selected])
+		}
+		return m, nil
+	}
+
+	if x >= rightXStart && x < rightXEnd {
+		m.focusPackages = true
+		m.dropdownOpen = false
+		details := m.highlighted
+		if len(details.Packages) == 0 {
+			return m, nil
+		}
+		innerHeight := max(1, panelHeight-4)
+		availableRows := packageVisibleLines(innerHeight, detailsHeaderLines())
+		if availableRows < 1 {
+			return m, nil
+		}
+		rowStartY := 12 // border+padding+details header lines
+		idx := m.packageScroll + (y - rowStartY)
+		if y >= rowStartY && idx >= m.packageScroll && idx < min(len(details.Packages), m.packageScroll+availableRows) {
+			m.packageSelected = idx
+		}
+	}
+
+	return m, nil
+}
+
+func (m *Model) legendActionAtX(x int) string {
+	if x < 0 {
+		return ""
+	}
+	segments := []struct {
+		label  string
+		action string
+	}{
+		{label: "Enter: select", action: "enter"},
+		{label: "j/k + ↑/↓: move", action: ""},
+		{label: "r: REPL", action: "repl"},
+		{label: "x: run file", action: "run-file"},
+		{label: "?: help", action: "help"},
+		{label: "Esc: menu", action: "menu"},
+		{label: "q: quit", action: "quit"},
+	}
+	sep := "  |  "
+	cursor := 0
+	for i, seg := range segments {
+		start := cursor
+		end := start + len([]rune(seg.label))
+		if x >= start && x < end {
+			return seg.action
+		}
+		cursor = end
+		if i < len(segments)-1 {
+			cursor += len([]rune(sep))
+		}
+	}
+	return ""
 }
 
 func (m *Model) handlePackageNav(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
