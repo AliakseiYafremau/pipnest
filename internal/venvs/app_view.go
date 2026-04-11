@@ -2,6 +2,7 @@ package venvs
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -79,80 +80,64 @@ func (m *Model) renderInsufficientSpace() string {
 func (m *Model) renderLeftPanel(width, height int) string {
 	focused := !m.focusPackages
 	innerHeight := max(1, height-4)
-	maxW := max(1, width-4)
-
-	currentLabel := "Current environment"
-	currentValue := "No active interpreter"
-	if m.view.Interpreter != "" {
-		currentValue = m.view.Interpreter
-	}
+	maxWidth := max(1, width-4)
 
 	muted := lipgloss.NewStyle().Foreground(mutedColor)
-	currentStyle := lipgloss.NewStyle().Bold(true).Foreground(accentForKind(m.view.InterpreterKind))
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor)
-	currentLabelBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, true, false, true).
-		BorderForeground(lipgloss.Color(uiTitleColor)).
-		Padding(0, 0).
-		Width(max(1, maxW))
-	currentValueBoxStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), false, true, true, true).
-		BorderForeground(lipgloss.Color(uiTitleColor)).
-		Padding(0, 0).
-		Width(max(1, maxW))
 
-	labelBlock := strings.Split(currentLabelBoxStyle.Render(muted.Render(truncateLine(currentLabel, max(1, maxW-2)))), "\n")
-	valueBlock := strings.Split(currentValueBoxStyle.Render(currentStyle.Render(truncateLine(currentValue, max(1, maxW-2)))), "\n")
-
-	lines := make([]string, 0, len(labelBlock)+len(valueBlock)+2)
-	lines = append(lines, labelBlock...)
-	lines = append(lines, valueBlock...)
+	lines := make([]string, 0, innerHeight)
+	lines = append(lines, titleStyle.Render(truncateLine("Select interpreter", max(1, width-4))))
 	lines = append(lines, "")
-	lines = append(lines, titleStyle.Render(truncateLine("Select interpreter", maxW)))
 
-	if m.dropdownOpen {
-		maxWidth := max(1, width-8)
-		availableRows := innerHeight - len(lines)
-		if availableRows < 0 {
-			availableRows = 0
+	availableRows := innerHeight - len(lines)
+	if availableRows < 0 {
+		availableRows = 0
+	}
+	start := 0
+	end := len(m.interpreters)
+	if availableRows < len(m.interpreters) {
+		start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
+		end = start + availableRows
+	}
+
+	rowTextWidth := maxWidth
+	if len(m.interpreters) > availableRows && availableRows > 0 {
+		rowTextWidth = max(1, rowTextWidth-2)
+	}
+
+	// compute label column width from visible slice
+	const kindBadgeWidth = 7 // "[venv] " etc.
+	const prefixWidth = 2    // "> " / "  "
+	labelColWidth := 8
+	for i := start; i < end; i++ {
+		if w := lipgloss.Width(m.interpreters[i].Label); w > labelColWidth {
+			labelColWidth = w
 		}
-		start := 0
-		end := len(m.interpreters)
-		if availableRows < len(m.interpreters) {
-			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
-			end = start + availableRows
-		}
-		rows := make([]string, 0, max(0, end-start))
-		rowTextWidth := maxWidth
-		if len(m.interpreters) > availableRows && availableRows > 0 {
-			rowTextWidth = max(1, rowTextWidth-2)
-		}
-		for i := start; i < end; i++ {
-			option := m.interpreters[i]
-			label := option.Label
-			if option.Path != "" {
-				label = fmt.Sprintf("%s - %s", option.Label, option.Path)
-			}
-			label = truncateLine(label, rowTextWidth)
-			var lineStyle lipgloss.Style
-			kindStyle := lipgloss.NewStyle().Foreground(accentForKind(option.Kind))
-			if i == m.selected && focused {
-				lineStyle = kindStyle.Reverse(true).Bold(true)
-				label = "> " + label
-			} else {
-				lineStyle = kindStyle
-				label = "  " + label
-			}
-			rows = append(rows, lineStyle.Render(label))
-		}
-		if len(m.interpreters) > availableRows && availableRows > 0 {
-			trackStyle := lipgloss.NewStyle().Foreground(mutedColor)
-			thumbStyle := lipgloss.NewStyle().Foreground(uiTitleColor)
-			rows = addScrollbar(rows, availableRows, len(m.interpreters), start, rowTextWidth+2, trackStyle, thumbStyle)
-		}
-		lines = append(lines, rows...)
+	}
+	maxLabelCol := max(8, (rowTextWidth-prefixWidth-kindBadgeWidth)/2)
+	if labelColWidth > maxLabelCol {
+		labelColWidth = maxLabelCol
+	}
+
+	rows := make([]string, 0, max(0, end-start))
+	for i := start; i < end; i++ {
+		option := m.interpreters[i]
+		isActive := option.Path != "" && option.Path == m.view.Interpreter
+		isSelected := i == m.selected && focused
+
+		rows = append(rows, m.renderInterpreterRow(option, isSelected, isActive, labelColWidth, rowTextWidth))
+	}
+
+	if len(m.interpreters) > availableRows && availableRows > 0 {
+		trackStyle := lipgloss.NewStyle().Foreground(mutedColor)
+		thumbStyle := lipgloss.NewStyle().Foreground(uiTitleColor)
+		rows = addScrollbar(rows, availableRows, len(m.interpreters), start, rowTextWidth+2, trackStyle, thumbStyle)
+	}
+
+	if len(m.interpreters) == 0 {
+		lines = append(lines, muted.Render(truncateLine("No interpreters found.", max(1, width-4))))
 	} else {
-		lines = append(lines, muted.Render(truncateLine("Press Enter to open", maxW)))
+		lines = append(lines, rows...)
 	}
 
 	lines = fillToHeight(lines, innerHeight)
@@ -474,6 +459,72 @@ func packageVisibleLines(panelInnerHeight, usedLines int) int {
 }
 
 func detailsHeaderLines() int { return 10 }
+
+func kindBadge(kind InterpreterKind) string {
+	switch kind {
+	case InterpreterVenv:
+		return "[venv]"
+	case InterpreterConda:
+		return "[conda]"
+	default:
+		return "[global]"
+	}
+}
+
+func (m *Model) renderInterpreterRow(option InterpreterOption, isSelected, isActive bool, labelColWidth, rowTextWidth int) string {
+	kindStyle := lipgloss.NewStyle().Foreground(accentForKind(option.Kind))
+	mutedStyle := lipgloss.NewStyle().Foreground(mutedColor)
+
+	label := option.Label
+	labelW := lipgloss.Width(label)
+	if labelW > labelColWidth {
+		label = truncateLine(label, labelColWidth)
+		labelW = labelColWidth
+	}
+	labelCol := kindStyle.Render(label + strings.Repeat(" ", max(0, labelColWidth-labelW)))
+
+	pathAvail := rowTextWidth - 2 - labelColWidth - 2 // prefix + label + sep
+	path := abbreviatePath(option.Path, max(0, pathAvail))
+	pathCol := mutedStyle.Render(path)
+
+	row := strings.TrimRight(lipgloss.JoinHorizontal(lipgloss.Top, labelCol, "  ", pathCol), " ")
+	row = truncateLine(row, rowTextWidth-2)
+
+	switch {
+	case isSelected && isActive:
+		return lipgloss.NewStyle().Reverse(true).Bold(true).Render("> " + row + " <")
+	case isSelected:
+		return lipgloss.NewStyle().Reverse(true).Bold(true).Render("> " + row)
+	case isActive:
+		return kindStyle.Bold(true).Render("» " + row + " «")
+	default:
+		return "  " + row
+	}
+}
+
+// abbreviatePath shortens a path to fit within maxWidth.
+// It replaces the home directory with ~, then if still too long,
+// keeps as many trailing path components as fit with a …/ prefix.
+func abbreviatePath(path string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && strings.HasPrefix(path, home) {
+		path = "~" + path[len(home):]
+	}
+	if lipgloss.Width(path) <= maxWidth {
+		return path
+	}
+	parts := strings.Split(path, string(os.PathSeparator))
+	for i := 1; i < len(parts); i++ {
+		candidate := "…/" + strings.Join(parts[i:], string(os.PathSeparator))
+		if lipgloss.Width(candidate) <= maxWidth {
+			return candidate
+		}
+	}
+	return truncateLine(path, maxWidth)
+}
 
 func clamp(value, minimum, maximum int) int {
 	if value < minimum {

@@ -2,6 +2,7 @@ package requirements
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	packagemanager "pipnest/internal/requirements/package_manager"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -70,6 +72,9 @@ type installDoneMsg struct {
 }
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+var markdownImagePattern = regexp.MustCompile(`!\[[^\]]*\]\([^)]*\)`)
+var glowRenderCache = map[string]string{}
+var glamourRendererCache = map[int]*glamour.TermRenderer{}
 
 func NewViewModel() ViewModel {
 	installInput := textinput.New()
@@ -376,16 +381,16 @@ func (m ViewModel) View() string {
 		rightWidth = 10
 	}
 
-	leftStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
-		Width(leftWidth).
-		Height(bodyHeight - 2)
-	rightStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
-		Width(rightWidth).
-		Height(bodyHeight - 2)
+	basePaneStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder())
+	focusedPaneStyle := basePaneStyle.Bold(true).BorderForeground(reqTitleColor)
+
+	leftStyle := basePaneStyle.Width(leftWidth).Height(bodyHeight - 2)
+	rightStyle := basePaneStyle.Width(rightWidth).Height(bodyHeight - 2)
+	if m.FocusedPane == 0 {
+		leftStyle = focusedPaneStyle.Width(leftWidth).Height(bodyHeight - 2)
+	} else {
+		rightStyle = focusedPaneStyle.Width(rightWidth).Height(bodyHeight - 2)
+	}
 
 	leftPane := leftStyle.Render(m.renderInstalledPackages(leftWidth-4, bodyHeight-4))
 	rightPane := rightStyle.Render(m.renderPackageDetails(rightWidth - 4))
@@ -573,7 +578,7 @@ func (m *ViewModel) ensureSuggestionSelectionVisible(visibleRows int) {
 }
 
 func (m ViewModel) visibleMainRows() int {
-	rows := m.Height - 8
+	rows := m.Height - 7
 	if rows < 4 {
 		rows = 4
 	}
@@ -597,9 +602,12 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		rows = 3
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117")).Render("Installed Packages")
-	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Installed Packages")
+	loadingStyle := lipgloss.NewStyle().Foreground(reqVenvColor)
+	emptyStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+	mutedStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
+	nameStyle := lipgloss.NewStyle().Foreground(reqGlobalColor)
+	versionStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	if m.LoadingList {
 		return strings.Join([]string{header, "", loadingStyle.Render("Loading installed packages...")}, "\n")
@@ -618,29 +626,55 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	if start < 0 {
 		start = 0
 	}
-
 	end := start + rows
 	if end > len(m.Packages) {
 		end = len(m.Packages)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-	lines := []string{header, ""}
+	// compute aligned name column width from visible slice
+	rowTextWidth := width - 2 // 2 for "> " / "  " prefix
+	maxName := 0
 	for i := start; i < end; i++ {
-		dep := m.Packages[i]
-		line := dep.Name
-		if dep.Version != "" {
-			line += " " + dep.Version
+		if w := lipgloss.Width(m.Packages[i].Name); w > maxName {
+			maxName = w
 		}
-		line = TruncateText(line, width)
-		if i == m.Selected {
-			line = selectedStyle.Render(line)
-		}
-		lines = append(lines, line)
+	}
+	capWidth := max(8, rowTextWidth-14)
+	nameWidth := maxName
+	if nameWidth > capWidth {
+		nameWidth = capWidth
+	}
+	if nameWidth < 8 {
+		nameWidth = 8
 	}
 
+	lines := []string{header, ""}
+	pkgLines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		dep := m.Packages[i]
+		selected := i == m.Selected
+
+		name := dep.Name
+		if lipgloss.Width(name) > nameWidth {
+			name = TruncateText(name, nameWidth)
+		}
+		pad := nameWidth - lipgloss.Width(name)
+		if pad < 0 {
+			pad = 0
+		}
+		nameCol := nameStyle.Render(name + strings.Repeat(" ", pad))
+		verCol := versionStyle.Render(dep.Version)
+		row := TruncateText(lipgloss.JoinHorizontal(lipgloss.Top, nameCol, "  ", verCol), rowTextWidth)
+
+		if selected {
+			row = lipgloss.NewStyle().Reverse(true).Bold(true).Render("> " + row)
+		} else {
+			row = "  " + row
+		}
+		pkgLines = append(pkgLines, row)
+	}
+
+	lines = append(lines, pkgLines...)
 	lines = append(lines, "", mutedStyle.Render(fmt.Sprintf("%d/%d", m.Selected+1, len(m.Packages))))
 	return strings.Join(lines, "\n")
 }
@@ -675,7 +709,131 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		WrapText(version, width),
 	}
 
-	return strings.Join(lines, "\n")
+	if m.SelectedMetaLoading {
+		lines = append(lines, "", muted.Render("Loading package metadata from PyPI..."))
+		return m.renderScrollableDetails(lines, width, rows)
+	}
+
+	if m.SelectedMetaErr != "" {
+		lines = append(lines,
+			"",
+			lipgloss.NewStyle().Foreground(reqVersionColor).Render("Metadata unavailable"),
+			WrapText(m.SelectedMetaErr, width),
+		)
+		return m.renderScrollableDetails(lines, width, rows)
+	}
+
+	if m.SelectedMeta != nil {
+		summary := strings.TrimSpace(m.SelectedMeta.Description)
+		if summary != "" {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(reqKeyColor).Render("Summary"), WrapText(summary, width))
+		}
+		if strings.TrimSpace(m.SelectedMeta.Readme) != "" {
+			lines = append(lines, "", lipgloss.NewStyle().Foreground(reqKeyColor).Render("README"), m.renderMarkdownWithGlamour(m.SelectedMeta.Readme, width))
+		}
+	}
+
+	return m.renderScrollableDetails(lines, width, rows)
+}
+
+func (m ViewModel) renderScrollableDetails(lines []string, width int, rows int) (string, int, int) {
+	flat := make([]string, 0, len(lines))
+	for _, line := range lines {
+		flat = append(flat, strings.Split(line, "\n")...)
+	}
+
+	maxScroll := 0
+	if len(flat) > rows {
+		maxScroll = len(flat) - rows
+	}
+	if m.DetailsScroll < 0 {
+		m.DetailsScroll = 0
+	}
+	if m.DetailsScroll > maxScroll {
+		m.DetailsScroll = maxScroll
+	}
+
+	start := m.DetailsScroll
+	end := start + rows
+	if end > len(flat) {
+		end = len(flat)
+	}
+
+	out := append([]string{}, flat[start:end]...)
+	for len(out) < rows {
+		out = append(out, "")
+	}
+
+	return strings.Join(out, "\n"), len(flat), start
+}
+
+func (m ViewModel) renderMarkdownWithGlamour(markdown string, width int) string {
+	md := strings.TrimSpace(markdown)
+	if md == "" {
+		return ""
+	}
+	if width < 20 {
+		width = 20
+	}
+
+	h := sha1.Sum([]byte(md))
+	cacheKey := fmt.Sprintf("%d:%x", width, h)
+	if cached, ok := glowRenderCache[cacheKey]; ok {
+		return cached
+	}
+
+	renderer, err := getGlamourRenderer(width)
+	if err != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+	md = markdownImagePattern.ReplaceAllString(md, "")
+	rendered, renderErr := renderer.Render(md)
+	if renderErr != nil {
+		rendered := wrapMarkdownFallback(md, width)
+		glowRenderCache[cacheKey] = rendered
+		return rendered
+	}
+
+	rendered = strings.TrimRight(rendered, "\n")
+	if strings.TrimSpace(rendered) == "" {
+		rendered = wrapMarkdownFallback(md, width)
+	}
+	glowRenderCache[cacheKey] = rendered
+	return rendered
+}
+
+func getGlamourRenderer(width int) (*glamour.TermRenderer, error) {
+	if width < 20 {
+		width = 20
+	}
+	if cached, ok := glamourRendererCache[width]; ok {
+		return cached, nil
+	}
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithAutoStyle(),
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return nil, err
+	}
+	glamourRendererCache[width] = renderer
+	return renderer, nil
+}
+
+func wrapMarkdownFallback(markdown string, width int) string {
+	lines := strings.Split(markdown, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		if strings.TrimSpace(trimmed) == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, strings.Split(WrapText(trimmed, width), "\n")...)
+	}
+	return strings.Join(out, "\n")
 }
 
 func (m ViewModel) renderInstallModal() string {
@@ -801,9 +959,51 @@ func (m ViewModel) renderBottomHelp() string {
 	help := "ESC back | Up/Down select | D uninstall | I open install"
 	style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
 	if m.ModalOpen {
-		help = "ESC close modal | Up/Down select suggestion | Enter install"
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Enter"), sepStyle.Render(": install"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("q"), sepStyle.Render(": quit"),
+		)
+		return TruncateText(legend, m.Width)
 	}
 
-	return style.Render(TruncateText(help, m.Width))
+	if m.ActionModalOpen {
+		state := "result"
+		if m.ActionModalLoading {
+			state = "running"
+		}
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Action"), sepStyle.Render(": "+state),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Enter"), sepStyle.Render(": close"),
+		)
+		return TruncateText(legend, m.Width)
+	}
+
+	if m.HelpModalOpen {
+		legend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("Esc"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Enter"), sepStyle.Render(": close"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("?"), sepStyle.Render(": close"),
+		)
+		return TruncateText(legend, m.Width)
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top,
+		keyStyle.Render("i"), sepStyle.Render(": install"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("d"), sepStyle.Render(": uninstall"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("?"), sepStyle.Render(": more"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("q"), sepStyle.Render(": quit"),
+	)
 }
