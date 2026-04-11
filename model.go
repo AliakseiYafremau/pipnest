@@ -112,6 +112,10 @@ func (m model) updateMainMenu(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cheatSelected = 0
 				m.cheatScrollOffset = 0
 			}
+		case tea.KeyRunes:
+			if msg.String() == "q" {
+				return m, tea.Quit
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

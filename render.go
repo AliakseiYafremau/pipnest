@@ -19,11 +19,12 @@ func renderMainMenu(m model) string {
 		width = 30
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33")).
-		MarginBottom(1)
-
+	/*
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("33")).
+			MarginBottom(1)
+	*/
 	menuItemStyle := lipgloss.NewStyle().
 		Padding(0, 1).
 		Width(width - 4)
@@ -36,7 +37,15 @@ func renderMainMenu(m model) string {
 		Width(width - 4)
 
 	var lines []string
-	lines = append(lines, titleStyle.Render("🐍 pipnest - Package Manager"))
+
+	// Agregar ASCII art logo
+	logoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("33")).
+		Width(width).
+		Align(lipgloss.Center)
+
+	lines = append(lines, logoStyle.Render(cheatsheet.LogoTitle))
+	//lines = append(lines, titleStyle.Render("🐍 pipnest - Package Manager"))
 	lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Select an option:"))
 	lines = append(lines, "")
 
@@ -51,14 +60,9 @@ func renderMainMenu(m model) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Use ↑/↓ to navigate, Enter to select, Ctrl+C to quit"))
+	lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("Use ↑/↓ to navigate, Enter to select, Q to quit"))
 	lines = append(lines, "")
 	lines = append(lines, "")
-
-	// Agregar ASCII art logo
-	logoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
-
-	lines = append(lines, logoStyle.Render(cheatsheet.LogoTitle))
 
 	return strings.Join(lines, "\n")
 }
@@ -442,7 +446,7 @@ func renderCheatScreen(m model) string {
 		detailLines = append(detailLines, wrapText(cmd.Description, detailsWidth-4))
 
 		detailLines = append(detailLines, "")
-		detailLines = append(detailLines, metaStyle.Render("[Enter] Copy | [↑↓] Navigate"))
+		detailLines = append(detailLines, metaStyle.Render("[Enter] Copy | [↑↓] Navigate\n"))
 	} else {
 		detailLines = append(detailLines, metaStyle.Render("No command selected"))
 	}
