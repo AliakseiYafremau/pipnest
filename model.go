@@ -239,18 +239,13 @@ func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
 	m.konamiIndex = 0
 
 	if m.currentScreen == ScreenRequirements {
-		var cmd tea.Cmd
-		m.requirements, cmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		return m, cmd
+		var sizeCmd tea.Cmd
+		m.requirements, sizeCmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		return m, tea.Batch(sizeCmd, m.requirements.Init())
 	}
 
 	if m.currentScreen == ScreenPackages {
 		m.input.Focus()
-	}
-	if m.currentScreen == ScreenRequirements {
-		m.reqLoading = true
-		m.reqErr = nil
-		return m, loadInstalledPackages(m.packageManager)
 	}
 	if m.currentScreen == ScreenCheatSheet {
 		m.cheatSearch.Focus()
