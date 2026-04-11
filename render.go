@@ -306,7 +306,7 @@ func renderRequirementsScreen(m model) string {
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
-func renderVenvsScreen(m model) string {
+func renderVenvsScreen(_ model) string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
