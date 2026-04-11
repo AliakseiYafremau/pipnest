@@ -3,6 +3,8 @@ package requirements
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	packagemanager "pipnest/internal/requirements/package_manager"
 	"regexp"
 	"strings"
@@ -20,6 +22,16 @@ const (
 	logSuccess logKind = "success"
 	logError   logKind = "error"
 	logLoading logKind = "loading"
+)
+
+var (
+	reqMutedColor   = lipgloss.Color("8")
+	reqGlobalColor  = lipgloss.Color("6")
+	reqVenvColor    = lipgloss.Color("3")
+	reqTitleColor   = lipgloss.Color("5")
+	reqValueColor   = lipgloss.Color("4")
+	reqKeyColor     = lipgloss.Color("2")
+	reqVersionColor = lipgloss.Color("1")
 )
 
 type ViewModel struct {
@@ -44,6 +56,12 @@ type ViewModel struct {
 	ModalErrorText          string
 	ModalLoading            bool
 
+	ActionModalOpen    bool
+	ActionModalLoading bool
+	ActionModalTitle   string
+	ActionModalText    string
+	ActionModalKind    logKind
+
 	LogText string
 	LogKind logKind
 }
@@ -67,6 +85,16 @@ type searchSuggestionsDoneMsg struct {
 type installDoneMsg struct {
 	Name string
 	Err  error
+}
+
+type freezeDoneMsg struct {
+	FilePath string
+	Err      error
+}
+
+type installFromFileDoneMsg struct {
+	FilePath string
+	Err      error
 }
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
@@ -99,9 +127,12 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		if m.ModalOpen {
 			return m.updateInstallModal(msg)
 		}
+		if m.ActionModalOpen {
+			return m.updateActionModal(msg)
+		}
 		return m.updateMainWindow(msg)
 	case tea.MouseMsg:
-		if m.ModalOpen {
+		if m.ModalOpen || m.ActionModalOpen {
 			return m, nil
 		}
 		return m.updateMainMouse(msg)
@@ -171,6 +202,27 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 
 		m.closeModal()
 		m.setLog(logSuccess, fmt.Sprintf("Installed %s", msg.Name))
+		m.LoadingList = true
+		return m, m.loadInstalledCmd()
+	case freezeDoneMsg:
+		m.BusyAction = false
+		if msg.Err != nil {
+			m.showActionModalResult(logError, "Freeze failed", msg.Err.Error())
+			m.setLog(logError, "Freeze failed: "+msg.Err.Error())
+			return m, nil
+		}
+		m.showActionModalResult(logSuccess, "Freeze completed", "Updated: "+msg.FilePath)
+		m.setLog(logSuccess, fmt.Sprintf("requirements.txt updated: %s", msg.FilePath))
+		return m, nil
+	case installFromFileDoneMsg:
+		m.BusyAction = false
+		if msg.Err != nil {
+			m.showActionModalResult(logError, "Install failed", msg.Err.Error())
+			m.setLog(logError, "Install from requirements failed: "+msg.Err.Error())
+			return m, nil
+		}
+		m.showActionModalResult(logSuccess, "Install completed", "Installed from: "+msg.FilePath)
+		m.setLog(logSuccess, fmt.Sprintf("Installed from %s", msg.FilePath))
 		m.LoadingList = true
 		return m, m.loadInstalledCmd()
 	}
@@ -256,13 +308,40 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			m.BusyAction = true
 			m.setLog(logLoading, fmt.Sprintf("Uninstalling %s...", name))
 			return m, m.uninstallCmd(name)
-		case 'r', 'R':
+		case 'l', 'L':
 			if m.BusyAction {
 				return m, nil
 			}
 			m.LoadingList = true
 			m.setLog(logLoading, "Refreshing installed packages...")
 			return m, m.loadInstalledCmd()
+		case 'f', 'F':
+			if m.BusyAction || m.LoadingList {
+				return m, nil
+			}
+			freezePath, err := requirementsOutputPath()
+			if err != nil {
+				m.setLog(logError, "Freeze failed: "+err.Error())
+				return m, nil
+			}
+			m.BusyAction = true
+			m.showActionModalLoading("Freeze requirements", "Running pip freeze into requirements.txt...")
+			m.setLog(logLoading, "Running freeze to requirements.txt...")
+			return m, m.freezeCmd(freezePath)
+		case 'r', 'R':
+			if m.BusyAction || m.LoadingList {
+				return m, nil
+			}
+			reqFile, ok := findNearestRequirementsFile()
+			if !ok {
+				m.showActionModalResult(logInfo, "requirements.txt not found", "No requirements.txt found in this project tree")
+				m.setLog(logInfo, "No requirements.txt found in project")
+				return m, nil
+			}
+			m.BusyAction = true
+			m.showActionModalLoading("Install requirements", "Installing packages from requirements.txt...")
+			m.setLog(logLoading, "Installing from requirements.txt...")
+			return m, m.installFromFileCmd(reqFile)
 		}
 	}
 
@@ -385,6 +464,28 @@ func (m ViewModel) updateInstallModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	return m, tea.Batch(inputCmd, searchCmd)
 }
 
+func (m ViewModel) updateActionModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	if m.ActionModalLoading {
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyEsc, tea.KeyEnter:
+		m.closeActionModal()
+		return m, nil
+	case tea.KeyRunes:
+		if len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case 'q', 'Q':
+				m.closeActionModal()
+				return m, nil
+			}
+		}
+	}
+
+	return m, nil
+}
+
 func (m ViewModel) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return ""
@@ -412,12 +513,12 @@ func (m ViewModel) View() string {
 
 	leftStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
+		BorderForeground(reqTitleColor).
 		Width(leftWidth).
 		Height(bodyHeight - 2)
 	rightStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
+		BorderForeground(reqTitleColor).
 		Width(rightWidth).
 		Height(bodyHeight - 2)
 
@@ -432,11 +533,16 @@ func (m ViewModel) View() string {
 
 	baseMain := mainPanes
 	helpLine := m.renderBottomHelp()
-	if !m.ModalOpen {
+	if !m.ModalOpen && !m.ActionModalOpen {
 		return lipgloss.JoinVertical(lipgloss.Left, baseMain, helpLine)
 	}
 
-	modal := m.renderInstallModal()
+	modal := ""
+	if m.ModalOpen {
+		modal = m.renderInstallModal()
+	} else {
+		modal = m.renderActionModal()
+	}
 	plainModal := stripANSI(modal)
 	x := (m.Width - lipgloss.Width(plainModal)) / 2
 	if x < 0 {
@@ -519,6 +625,30 @@ func (m *ViewModel) closeModal() {
 	m.ModalLoading = false
 }
 
+func (m *ViewModel) showActionModalLoading(title string, text string) {
+	m.ActionModalOpen = true
+	m.ActionModalLoading = true
+	m.ActionModalTitle = strings.TrimSpace(title)
+	m.ActionModalText = strings.TrimSpace(text)
+	m.ActionModalKind = logLoading
+}
+
+func (m *ViewModel) showActionModalResult(kind logKind, title string, text string) {
+	m.ActionModalOpen = true
+	m.ActionModalLoading = false
+	m.ActionModalTitle = strings.TrimSpace(title)
+	m.ActionModalText = strings.TrimSpace(text)
+	m.ActionModalKind = kind
+}
+
+func (m *ViewModel) closeActionModal() {
+	m.ActionModalOpen = false
+	m.ActionModalLoading = false
+	m.ActionModalTitle = ""
+	m.ActionModalText = ""
+	m.ActionModalKind = logInfo
+}
+
 func (m *ViewModel) setLog(kind logKind, text string) {
 	m.LogKind = kind
 	m.LogText = strings.TrimSpace(text)
@@ -565,6 +695,54 @@ func (m ViewModel) installCmd(name string) tea.Cmd {
 		err := m.PackageManager.Install(ctx, name)
 		return installDoneMsg{Name: name, Err: err}
 	}
+}
+
+func (m ViewModel) freezeCmd(filePath string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		err := m.PackageManager.Freeze(ctx, filePath)
+		return freezeDoneMsg{FilePath: filePath, Err: err}
+	}
+}
+
+func (m ViewModel) installFromFileCmd(filePath string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		err := m.PackageManager.InstallFromFile(ctx, filePath)
+		return installFromFileDoneMsg{FilePath: filePath, Err: err}
+	}
+}
+
+func requirementsOutputPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(wd, "requirements.txt"), nil
+}
+
+func findNearestRequirementsFile() (string, bool) {
+	wd, err := os.Getwd()
+	if err != nil || wd == "" {
+		return "", false
+	}
+	current := wd
+	for {
+		candidate := filepath.Join(current, "requirements.txt")
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			return candidate, true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", false
 }
 
 func (m *ViewModel) ensureMainSelectionVisible(visibleRows int) {
@@ -636,9 +814,9 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		rows = 3
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("117")).Render("Installed Packages")
-	loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Installed Packages")
+	loadingStyle := lipgloss.NewStyle().Foreground(reqVenvColor)
+	emptyStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	if m.LoadingList {
 		return strings.Join([]string{header, "", loadingStyle.Render("Loading installed packages...")}, "\n")
@@ -663,8 +841,8 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		end = len(m.Packages)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("31"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+	mutedStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	lines := []string{header, ""}
 	for i := start; i < end; i++ {
@@ -689,9 +867,9 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		width = 10
 	}
 
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("111")).Render("Package Details")
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("159")).Bold(true)
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Package Details")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	accent := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
 	if m.LoadingList {
 		return strings.Join([]string{header, "", muted.Render("Loading...")}, "\n")
@@ -710,7 +888,7 @@ func (m ViewModel) renderPackageDetails(width int) string {
 		header,
 		"",
 		accent.Render(dep.Name),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Render("Version"),
+		lipgloss.NewStyle().Foreground(reqKeyColor).Render("Version"),
 		WrapText(version, width),
 	}
 
@@ -735,12 +913,12 @@ func (m ViewModel) renderInstallModal() string {
 	}
 	modalStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("255")).
+		BorderForeground(reqTitleColor).
 		Width(modalWidth).
 		Height(modalHeight)
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214")).Render("Install Package")
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("Type to search")
+	header := lipgloss.NewStyle().Bold(true).Foreground(reqTitleColor).Render("Install Package")
+	muted := lipgloss.NewStyle().Foreground(reqMutedColor)
+	subtitle := lipgloss.NewStyle().Foreground(reqGlobalColor).Render("Type to search")
 	innerHeight := modalHeight - 2
 	if innerHeight < 1 {
 		innerHeight = 1
@@ -762,12 +940,12 @@ func (m ViewModel) renderInstallModal() string {
 		end = len(m.Suggestions)
 	}
 
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("25"))
-	inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("228")).Bold(true)
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
+	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
 	suggestionLines := make([]string, 0, rows)
 	if m.ModalLoadingSuggestions {
-		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("Searching suggestions..."))
+		suggestionLines = append(suggestionLines, lipgloss.NewStyle().Foreground(reqVenvColor).Render("Searching suggestions..."))
 	} else if len(m.Suggestions) == 0 {
 		suggestionLines = append(suggestionLines, muted.Render("No suggestions"))
 	} else {
@@ -787,10 +965,10 @@ func (m ViewModel) renderInstallModal() string {
 	errorLinesCount := 0
 	if m.ModalErrorText != "" {
 		wrapped := WrapText(m.ModalErrorText, modalWidth-8)
-		errorBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(wrapped)
+		errorBlock = lipgloss.NewStyle().Foreground(reqVersionColor).Render(wrapped)
 		errorLinesCount = len(strings.Split(wrapped, "\n"))
 	} else if m.ModalLoading {
-		errorBlock = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render("Installing...")
+		errorBlock = lipgloss.NewStyle().Foreground(reqVenvColor).Render("Installing...")
 		errorLinesCount = 1
 	}
 
@@ -817,6 +995,81 @@ func (m ViewModel) renderInstallModal() string {
 	return modalStyle.Render(strings.Join(body, "\n"))
 }
 
+func (m ViewModel) renderActionModal() string {
+	modalWidth := int(float64(m.Width) * 0.62)
+	if modalWidth < 36 {
+		modalWidth = 36
+	}
+	if modalWidth > m.Width-2 {
+		modalWidth = m.Width - 2
+	}
+
+	modalHeight := 10
+	if modalHeight > m.Height-2 {
+		modalHeight = m.Height - 2
+	}
+	if modalHeight < 7 {
+		modalHeight = 7
+	}
+
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(reqTitleColor).
+		Width(modalWidth).
+		Height(modalHeight)
+
+	titleColor := reqGlobalColor
+	textColor := reqMutedColor
+	if m.ActionModalLoading {
+		titleColor = reqVenvColor
+		textColor = reqGlobalColor
+	} else {
+		switch m.ActionModalKind {
+		case logSuccess:
+			titleColor = reqKeyColor
+			textColor = reqGlobalColor
+		case logError:
+			titleColor = reqVersionColor
+			textColor = reqMutedColor
+		case logInfo:
+			titleColor = reqGlobalColor
+			textColor = reqMutedColor
+		}
+	}
+
+	title := strings.TrimSpace(m.ActionModalTitle)
+	if title == "" {
+		title = "Action"
+	}
+	message := strings.TrimSpace(m.ActionModalText)
+	if message == "" {
+		message = "Working..."
+	}
+
+	header := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Render(TruncateText(title, modalWidth-6))
+	body := lipgloss.NewStyle().Foreground(textColor).Render(WrapText(message, modalWidth-6))
+	footerText := "Esc/Enter close"
+	if m.ActionModalLoading {
+		footerText = "Working..."
+	}
+	footer := lipgloss.NewStyle().Foreground(reqMutedColor).Render(footerText)
+
+	lines := []string{header, "", body, "", footer}
+	innerHeight := modalHeight - 2
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+	if len(lines) > innerHeight {
+		lines = lines[:innerHeight]
+	} else {
+		for len(lines) < innerHeight {
+			lines = append(lines, "")
+		}
+	}
+
+	return modalStyle.Render(strings.Join(lines, "\n"))
+}
+
 func (m ViewModel) renderLogLine() string {
 	style := lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Width(m.Width - 2).Height(1)
 	text := m.LogText
@@ -825,17 +1078,17 @@ func (m ViewModel) renderLogLine() string {
 	}
 
 	prefix := "[INFO] "
-	color := lipgloss.Color("245")
+	color := reqMutedColor
 	switch m.LogKind {
 	case logSuccess:
 		prefix = "[OK] "
-		color = lipgloss.Color("42")
+		color = reqKeyColor
 	case logError:
 		prefix = "[ERR] "
-		color = lipgloss.Color("196")
+		color = reqVersionColor
 	case logLoading:
 		prefix = "[LOAD] "
-		color = lipgloss.Color("220")
+		color = reqVenvColor
 	}
 
 	line := lipgloss.NewStyle().Foreground(color).Render(prefix + text)
@@ -844,11 +1097,19 @@ func (m ViewModel) renderLogLine() string {
 }
 
 func (m ViewModel) renderBottomHelp() string {
-	help := "ESC back | Up/Down select | D uninstall | I open install"
-	style := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	help := "ESC back | Up/Down select | D uninstall | I install pkg | F freeze | R install requirements | L refresh"
+	style := lipgloss.NewStyle().Foreground(reqKeyColor).Bold(true)
 	if m.ModalOpen {
 		help = "ESC close modal | Up/Down select suggestion | Enter install"
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+		style = lipgloss.NewStyle().Foreground(reqVenvColor).Bold(true)
+	}
+	if m.ActionModalOpen {
+		if m.ActionModalLoading {
+			help = "Action running..."
+		} else {
+			help = "ESC or Enter close"
+		}
+		style = lipgloss.NewStyle().Foreground(reqGlobalColor).Bold(true)
 	}
 
 	return style.Render(TruncateText(help, m.Width))
