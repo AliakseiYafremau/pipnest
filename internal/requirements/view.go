@@ -2166,11 +2166,10 @@ func (m ViewModel) renderInstallSuggestionsPanel(width int, listRows int) string
 	versionStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 
 	// compute visible window
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(reqVenvColor).Reverse(true)
 	inputStyle := lipgloss.NewStyle().Foreground(reqValueColor).Bold(true)
 
-	lines := []string{title, inputStyle.Render(m.InstallInput.View()), ""}
-	remainingRows := rows - len(lines)
+	headerLines := []string{header, inputStyle.Render(m.InstallInput.View()), ""}
+	remainingRows := listRows - len(headerLines)
 	if remainingRows < 1 {
 		remainingRows = 1
 	}
@@ -2203,7 +2202,7 @@ func (m ViewModel) renderInstallSuggestionsPanel(width int, listRows int) string
 
 	var pkgLines []string
 	if m.ModalLoadingSuggestions {
-		pkgLines = append(pkgLines, statusStyle.Render("Searching...", width))
+		pkgLines = append(pkgLines, statusStyle.Width(width).Render("Searching..."))
 	} else if len(m.Suggestions) == 0 {
 		if m.ModalLastQuery != "" {
 			pkgLines = append(pkgLines, muted.Render("No results found."))
@@ -2246,6 +2245,7 @@ func (m ViewModel) renderInstallSuggestionsPanel(width int, listRows int) string
 	}
 
 	lines := []string{header, ""}
+	_ = headerLines // used above for remainingRows
 	lines = append(lines, pkgLines...)
 	lines = append(lines, "")
 	if statusLine != "" {
