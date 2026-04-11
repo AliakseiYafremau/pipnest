@@ -147,10 +147,10 @@ func renderMainMenu(m model) string {
 		Width(geom.menuWidth).
 		Align(lipgloss.Center)
 
-	hintStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(menuMutedColor)).
-		Width(geom.menuWidth).
-		Align(lipgloss.Center)
+	// hintStyle := lipgloss.NewStyle().
+	// 	Foreground(lipgloss.Color(menuMutedColor)).
+	// 	Width(geom.menuWidth).
+	// 	Align(lipgloss.Center)
 
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(menuAccentColor))
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuMutedColor))
@@ -182,9 +182,6 @@ func renderMainMenu(m model) string {
 			lines = append(lines, menuItemStyle.Render(prefix+item.Label))
 		}
 	}
-
-	lines = append(lines, "")
-	lines = append(lines, hintStyle.Render("Choose a section"))
 
 	content := strings.Join(lines, "\n")
 	centered := lipgloss.Place(width, max(1, height-1), lipgloss.Center, lipgloss.Center, content)

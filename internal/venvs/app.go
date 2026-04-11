@@ -56,10 +56,10 @@ type Model struct {
 	focusPackages      bool
 	packageSelected    int
 	packageScroll      int
-	keybindsModalOpen bool
-	runFileModalOpen  bool
-	runFilePath       string
-	runFileStatus     string
+	keybindsModalOpen  bool
+	runFileModalOpen   bool
+	runFilePath        string
+	runFileStatus      string
 	replModalOpen      bool
 	replStatus         string
 	addModalOpen       bool
@@ -81,6 +81,7 @@ func NewModel() Model {
 	m := Model{
 		view:               NewViewModel(),
 		interpreters:       ListInterpreters(),
+		dropdownOpen:       true,
 		startedWithVenv:    os.Getenv("VIRTUAL_ENV") != "",
 		detailsCache:       make(map[string]InterpreterDetails),
 		globalInterpreters: globalInterpretersFromPath(),
@@ -295,7 +296,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Type == tea.KeyRight {
 		if len(m.highlighted.Packages) > 0 {
-			m.dropdownOpen = false
 			m.focusPackages = true
 		}
 		return m, nil
@@ -564,7 +564,6 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.applySelection()
-	m.dropdownOpen = false
 	cmd := m.queueDetailsLoad(m.interpreters[m.selected])
 	return m, cmd
 }
@@ -701,7 +700,9 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		innerHeight := max(1, panelHeight-4)
 		start := 0
 		end := len(m.interpreters)
-		availableRows := innerHeight - 4
+		// Header now includes a two-part current-environment box (4 lines),
+		// plus spacer and selector title: 6 lines before the list starts.
+		availableRows := innerHeight - 6
 		if availableRows < 0 {
 			availableRows = 0
 		}
@@ -709,12 +710,11 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
 			end = start + availableRows
 		}
-		rowStartY := 6 // border+padding+header lines
+		rowStartY := 8 // border+padding (2) + header lines (6)
 		idx := start + (y - rowStartY)
 		if y >= rowStartY && idx >= start && idx < end {
 			m.selected = idx
 			m.applySelection()
-			m.dropdownOpen = false
 			m.focusPackages = false
 			return m, m.queueDetailsLoad(m.interpreters[m.selected])
 		}
@@ -723,7 +723,6 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	if x >= rightXStart && x < rightXEnd {
 		m.focusPackages = true
-		m.dropdownOpen = false
 		details := m.highlighted
 		if len(details.Packages) == 0 {
 			return m, nil

@@ -90,12 +90,25 @@ func (m *Model) renderLeftPanel(width, height int) string {
 	muted := lipgloss.NewStyle().Foreground(mutedColor)
 	currentStyle := lipgloss.NewStyle().Bold(true).Foreground(accentForKind(m.view.InterpreterKind))
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor)
-	lines := []string{
-		muted.Render(truncateLine(currentLabel, maxW)),
-		currentStyle.Render(truncateLine(currentValue, maxW)),
-		"",
-		titleStyle.Render(truncateLine("Select interpreter (Enter)", maxW)),
-	}
+	currentLabelBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), true, true, false, true).
+		BorderForeground(lipgloss.Color(uiTitleColor)).
+		Padding(0, 0).
+		Width(max(1, maxW))
+	currentValueBoxStyle := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, true, true, true).
+		BorderForeground(lipgloss.Color(uiTitleColor)).
+		Padding(0, 0).
+		Width(max(1, maxW))
+
+	labelBlock := strings.Split(currentLabelBoxStyle.Render(muted.Render(truncateLine(currentLabel, max(1, maxW-2)))), "\n")
+	valueBlock := strings.Split(currentValueBoxStyle.Render(currentStyle.Render(truncateLine(currentValue, max(1, maxW-2)))), "\n")
+
+	lines := make([]string, 0, len(labelBlock)+len(valueBlock)+2)
+	lines = append(lines, labelBlock...)
+	lines = append(lines, valueBlock...)
+	lines = append(lines, "")
+	lines = append(lines, titleStyle.Render(truncateLine("Select interpreter", maxW)))
 
 	if m.dropdownOpen {
 		maxWidth := max(1, width-8)
@@ -265,8 +278,6 @@ func (m *Model) renderLegend() string {
 
 	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		keyStyle.Render("Enter"), sepStyle.Render(": select"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("a"), sepStyle.Render(": add"),
 		sepStyle.Render("  |  "),
