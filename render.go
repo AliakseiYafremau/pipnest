@@ -237,15 +237,19 @@ func renderPackagesScreen(m model) string {
 		contentHeight = 10
 	}
 
-	leftPaneWidth := (m.width - 3) / 2
+	// Con RoundedBorder, Width(N) produce N+2 columnas reales (border izq + content + border der).
+	// El separador "│" ocupa 1 columna.
+	// Total: (left+2) + 1 + (right+2) = m.width  =>  left+right = m.width-5
+	leftPaneWidth := (m.width - 5) / 2
 	if leftPaneWidth < 24 {
 		leftPaneWidth = 24
 	}
-	rightPaneWidth := m.width - 3 - leftPaneWidth
+	rightPaneWidth := m.width - 5 - leftPaneWidth
 	if rightPaneWidth < 24 {
 		rightPaneWidth = 24
 	}
 
+	// inputStyle: Width(N)+Border => N+2 cols. Para ocupar m.width exacto: N = m.width-2
 	inputStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Width(m.width - 2).
@@ -286,7 +290,7 @@ func renderPackagesScreen(m model) string {
 	top := inputStyle.Render(inputBody)
 	leftPane := leftStyle.Render(resultsBody)
 	rightPane := rightStyle.Render(rightBody)
-	bottom := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, lipgloss.NewStyle().Width(1).Render("│"), rightPane)
+	bottom := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, " ", rightPane)
 
 	footer := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("245")).
@@ -411,11 +415,6 @@ func renderCheatScreen(m model) string {
 		return ""
 	}
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("33")).
-		MarginBottom(1)
-
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 	metaStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	selectedStyle := lipgloss.NewStyle().
@@ -431,6 +430,9 @@ func renderCheatScreen(m model) string {
 	snekStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("34"))
 
 	// Search input area
+	// Width(N)+Border+Padding(1): en lipgloss el Padding se suma al contenido interno.
+	// Para que la caja ocupe m.width exacto: Width = m.width - 2 - 2 = m.width - 4
+	// (2 por borders izq/der, el padding ya está dentro del Width en lipgloss >=0.6)
 	searchBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(1).
@@ -448,14 +450,15 @@ func renderCheatScreen(m model) string {
 			metaStyle.Render("[Tab] Focus/Unfocus input"),
 	)
 
-	// Calcular altura disponible para lista y detalles
-	contentHeight := m.height - 7 // Restar altura del título, search box y footer
+	// Overhead real: título(1) + MarginBottom(1) + searchBox(Height4+2borders+2padding=8) + footer(1) = 11
+	contentHeight := m.height - 11
 	if contentHeight < 8 {
 		contentHeight = 8
 	}
 
-	listWidth := (m.width - 3) / 2
-	detailsWidth := (m.width - 3) / 2
+	// (left+2) + 1 separador + (right+2) = m.width  =>  left+right = m.width-5
+	listWidth := (m.width - 5) / 2
+	detailsWidth := m.width - 5 - listWidth
 
 	commandListStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -532,26 +535,59 @@ func renderCheatScreen(m model) string {
 		detailLines = append(detailLines, metaStyle.Render("No command selected"))
 	}
 
-	// Agregar serpiente decorativa en el panel de detalles
-	snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
-	maxSnekLines := (contentHeight - len(detailLines)) - 2 // Dejar espacio
-	if maxSnekLines > 0 {
-		detailLines = append(detailLines, "")
-		// Agregar líneas de la serpiente
-		for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
-			snekLine := snekLines[i]
-			// Truncar línea si es muy larga
-			if len(snekLine) > detailsWidth-4 {
-				snekLine = truncateText(snekLine, detailsWidth-4)
-			}
-			detailLines = append(detailLines, snekStyle.Render(snekLine))
-		}
-	} else {
-		// Si no hay espacio, solo padding normal
-		for len(detailLines) < contentHeight-1 {
-			detailLines = append(detailLines, "")
-		}
-	}
+	// Agregar serpiente decorativa centrada y escalada en el panel de detalles
+snekLines := strings.Split(strings.TrimSpace(cheatsheet.SnekArt), "\n")
+maxSnekLines := (contentHeight - len(detailLines)) - 2
+panelInner := detailsWidth - 4
+
+snekMaxWidth := 0
+for _, sl := range snekLines {
+    if w := lipgloss.Width(sl); w > snekMaxWidth {
+        snekMaxWidth = w
+    }
+}
+
+if maxSnekLines > 0 && snekMaxWidth > 0 {
+    detailLines = append(detailLines, "")
+    for i := 0; i < maxSnekLines && i < len(snekLines); i++ {
+        snekLine := snekLines[i]
+        lineWidth := lipgloss.Width(snekLine)
+        if lineWidth == 0 {
+            detailLines = append(detailLines, "")
+            continue
+        }
+        if lineWidth <= panelInner {
+            pad := (panelInner - lineWidth) / 2
+            snekLine = strings.Repeat(" ", pad) + snekLine
+        } else {
+            type cp struct {
+                r rune
+                x int
+            }
+            var chars []cp
+            col := 0
+            for _, r := range snekLine {
+                chars = append(chars, cp{r, col})
+                col++
+            }
+            scaledRunes := make([]rune, panelInner)
+            for j := range scaledRunes {
+                scaledRunes[j] = ' '
+            }
+            for _, c := range chars {
+                newX := 0
+                if snekMaxWidth > 1 {
+                    newX = c.x * (panelInner - 1) / (snekMaxWidth - 1)
+                }
+                if newX >= 0 && newX < panelInner {
+                    scaledRunes[newX] = c.r
+                }
+            }
+            snekLine = strings.TrimRight(string(scaledRunes), " ")
+        }
+        detailLines = append(detailLines, snekStyle.Render(snekLine))
+    }
+}
 
 	// Padding para rellenar la altura si es necesario
 	for len(detailLines) < contentHeight-1 {
@@ -568,7 +604,6 @@ func renderCheatScreen(m model) string {
 		Render("↑/↓ Navigate | Type to search | Tab: Focus/Unfocus | Enter: Copy | ESC: Menu")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
-		titleStyle.Render("📚 Python Cheatsheet"),
 		searchBox,
 		middleRow,
 		footer)

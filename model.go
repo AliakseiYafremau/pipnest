@@ -419,13 +419,20 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.cheatSelected++
 				}
 			case tea.KeyPgUp:
-				visibleLines := (m.height - 8) / 3 // Estimar líneas visibles
+				// Mismo cálculo que renderCheatScreen: contentHeight = m.height-11, visibleLines = contentHeight-4
+				visibleLines := m.height - 15
+				if visibleLines < 1 {
+					visibleLines = 1
+				}
 				m.cheatSelected -= visibleLines
 				if m.cheatSelected < 0 {
 					m.cheatSelected = 0
 				}
 			case tea.KeyPgDown:
-				visibleLines := (m.height - 8) / 3
+				visibleLines := m.height - 15
+				if visibleLines < 1 {
+					visibleLines = 1
+				}
 				m.cheatSelected += visibleLines
 				if m.cheatSelected >= len(m.filteredCommands) {
 					m.cheatSelected = len(m.filteredCommands) - 1
@@ -464,7 +471,8 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Recalcular scroll offset para mantenerlo dentro de los límites
-	visibleLines := (m.height - 8) / 3
+	// Mismo cálculo que renderCheatScreen: contentHeight = m.height-11, visibleLines = contentHeight-4
+	visibleLines := m.height - 15
 	if visibleLines < 1 {
 		visibleLines = 1
 	}
