@@ -399,7 +399,7 @@ func renderRequirementsScreen(m model) string {
 		Foreground(lipgloss.Color("245")).
 		Render("i: Install | DEL: Uninstall | ESC: Menu"))
 
-	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+	return lipgloss.JoinVertical(lipgloss.Left)
 }
 
 // renderVenvsScreen: Renderiza la pantalla de venvs
