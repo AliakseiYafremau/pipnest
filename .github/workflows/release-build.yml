@@ -12,6 +12,16 @@ jobs:
   build-and-upload:
     if: github.event_name != 'release' || github.event.release.target_commitish == 'master'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
 
     steps:
       - name: Checkout
@@ -24,22 +34,21 @@ jobs:
 
       - name: Build binary
         env:
-          GOOS: linux
-          GOARCH: amd64
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/pipnest" .
+          go build -trimpath -ldflags="-s -w" -o "dist/pipnest_${GOOS}_${GOARCH}" .
 
       - name: Create zip archive
         run: |
           cd dist
-          zip -r "pipnest_linux_amd64.zip" pipnest
+          zip -r "pipnest_${{ matrix.goos }}_${{ matrix.goarch }}.zip" "pipnest_${{ matrix.goos }}_${{ matrix.goarch }}"
 
       - name: Upload release assets
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/pipnest
-            dist/pipnest_linux_amd64.zip
+            dist/pipnest_${{ matrix.goos }}_${{ matrix.goarch }}.zip
