@@ -14,14 +14,19 @@ import (
 	"time"
 )
 
+// InterpreterKind identifies the environment type for a Python interpreter.
 type InterpreterKind string
 
 const (
+	// InterpreterGlobal marks a system/global interpreter.
 	InterpreterGlobal InterpreterKind = "global"
-	InterpreterVenv   InterpreterKind = "venv"
-	InterpreterConda  InterpreterKind = "conda"
+	// InterpreterVenv marks a classic virtualenv/venv interpreter.
+	InterpreterVenv InterpreterKind = "venv"
+	// InterpreterConda marks an interpreter managed by conda.
+	InterpreterConda InterpreterKind = "conda"
 )
 
+// InterpreterOption is a selectable interpreter entry in the UI.
 type InterpreterOption struct {
 	Label string
 	Path  string
@@ -29,11 +34,13 @@ type InterpreterOption struct {
 	Kind  InterpreterKind
 }
 
+// PackageInfo holds basic package name and version metadata.
 type PackageInfo struct {
 	Name    string
 	Version string
 }
 
+// InterpreterDetails contains enriched metadata for an interpreter.
 type InterpreterDetails struct {
 	Path              string
 	Kind              InterpreterKind
@@ -46,6 +53,7 @@ type InterpreterDetails struct {
 	ActivationCommand string
 }
 
+// ActivationCommand returns the shell command to activate this interpreter.
 func (option InterpreterOption) ActivationCommand() string {
 	switch option.Kind {
 	case InterpreterVenv:
@@ -64,6 +72,7 @@ func (option InterpreterOption) ActivationCommand() string {
 	}
 }
 
+// Details inspects and returns metadata for this interpreter option.
 func (option InterpreterOption) Details() InterpreterDetails {
 	details := InterpreterDetails{
 		Path:              option.Path,
@@ -146,6 +155,7 @@ func formatTimestamp(value time.Time) string {
 	return value.Local().Format("2006-01-02 15:04")
 }
 
+// DetectInterpreter returns the preferred interpreter path and kind.
 func DetectInterpreter() (string, InterpreterKind) {
 	options := ListInterpreters()
 	if len(options) == 0 {
@@ -155,6 +165,7 @@ func DetectInterpreter() (string, InterpreterKind) {
 	return options[0].Path, options[0].Kind
 }
 
+// ListInterpreters discovers available interpreter options.
 func ListInterpreters() []InterpreterOption {
 	options := make([]InterpreterOption, 0, 4)
 	seen := make(map[string]struct{})

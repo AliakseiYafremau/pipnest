@@ -5,13 +5,14 @@ package cheatsheet
 
 import "strings"
 
+// CheatCommand describes one command snippet shown in the cheatsheet.
 type CheatCommand struct {
 	Category    string
 	Command     string
 	Description string
 }
 
-// CheatCommands: Listado de comandos útiles para Python/Pip
+// CheatCommands is the curated command list shown in the cheatsheet screen.
 var CheatCommands = []CheatCommand{
 	// Pip - Package Management
 	{
@@ -231,7 +232,7 @@ var CheatCommands = []CheatCommand{
 	},
 }
 
-// FilterCommands: Filtra comandos por búsqueda (comando, descripción o categoría)
+// FilterCommands filters commands by command text, description, or category.
 func FilterCommands(commands []CheatCommand, search string) []CheatCommand {
 	if search == "" {
 		return commands

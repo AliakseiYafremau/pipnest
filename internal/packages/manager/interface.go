@@ -5,11 +5,13 @@ package manager
 
 import "context"
 
+// Dependency represents an installed or searchable Python package.
 type Dependency struct {
 	Name    string
 	Version string
 }
 
+// PackageManager abstracts dependency operations across pip/uv/poetry.
 type PackageManager interface {
 	Install(ctx context.Context, pkg_name string) error             // pip install <pkg_name>
 	InstallFromFile(ctx context.Context, file_path string) error    // pip install -r <file_path>

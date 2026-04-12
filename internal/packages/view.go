@@ -50,6 +50,7 @@ var (
 	reqVersionColor = lipgloss.Color("1")
 )
 
+// ViewModel stores state and behavior for the dependencies management screen.
 type ViewModel struct {
 	Width           int
 	Height          int
@@ -199,6 +200,7 @@ type installPackageMetaLoadedMsg struct {
 type openManagerModalMsg struct{}
 type deferredLoadInstalledMsg struct{}
 
+// OpenManagerModalCmd opens the package manager selector modal.
 func OpenManagerModalCmd() tea.Cmd {
 	return func() tea.Msg {
 		return openManagerModalMsg{}
@@ -218,6 +220,7 @@ var glamourRendererCache = map[int]*glamour.TermRenderer{}
 
 const readmePreviewMaxChars = 12000
 
+// NewViewModel creates a ViewModel with default inputs and detected manager.
 func NewViewModel() ViewModel {
 	installInput := textinput.New()
 	installInput.Placeholder = "Type package name..."
@@ -248,10 +251,12 @@ func NewViewModel() ViewModel {
 	}
 }
 
+// Init implements the Bubble Tea model initialization command.
 func (m ViewModel) Init() tea.Cmd {
 	return tea.Batch(textinput.Blink, deferredLoadInstalledCmd())
 }
 
+// Update handles messages and returns updated state plus optional command.
 func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -509,6 +514,7 @@ func (m ViewModel) isLoaderActive() bool {
 		m.SelectedMetaLoading
 }
 
+// IsLoading reports whether the screen has an active async operation.
 func (m ViewModel) IsLoading() bool {
 	return m.isLoaderActive()
 }
@@ -1218,6 +1224,7 @@ func (m ViewModel) updateHelpModal(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 	return m, nil
 }
 
+// View renders the complete dependencies management UI.
 func (m ViewModel) View() string {
 	if m.Width == 0 || m.Height == 0 {
 		return ""

@@ -16,6 +16,7 @@ var (
 	virtualEnvStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ffde57"))
 )
 
+// ViewModel renders a compact interpreter status card.
 type ViewModel struct {
 	Width           int
 	Height          int
@@ -23,6 +24,7 @@ type ViewModel struct {
 	InterpreterKind InterpreterKind
 }
 
+// NewViewModel builds a status view from the detected interpreter.
 func NewViewModel() ViewModel {
 	interpreter, kind := DetectInterpreter()
 	return ViewModel{
@@ -31,6 +33,7 @@ func NewViewModel() ViewModel {
 	}
 }
 
+// View renders the interpreter status card.
 func (m ViewModel) View() string {
 	if m.Width <= 0 || m.Height <= 0 {
 		return ""

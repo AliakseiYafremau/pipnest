@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// RenderResults renders the package search result list pane.
 func RenderResults(results []Result, width int, selectedIndex int) string {
 	if len(results) == 0 {
 		return ""
@@ -65,6 +66,7 @@ func formatResultLine(result Result, width int) string {
 	return line
 }
 
+// SelectedSearchResult returns the currently selected result or nil.
 func SelectedSearchResult(results []Result, index int) *Result {
 	if index < 0 || index >= len(results) {
 		return nil
@@ -72,6 +74,7 @@ func SelectedSearchResult(results []Result, index int) *Result {
 	return &results[index]
 }
 
+// RenderPackageDetails renders the package details pane content.
 func RenderPackageDetails(result *Result, width int, loading bool, query string, err error) string {
 	if width < 24 {
 		width = 24
@@ -119,6 +122,7 @@ func RenderPackageDetails(result *Result, width int, loading bool, query string,
 	return strings.Join(lines, "\n")
 }
 
+// TruncateText truncates text to max runes and appends an ellipsis when needed.
 func TruncateText(text string, max int) string {
 	if max <= 0 {
 		return ""
@@ -133,6 +137,7 @@ func TruncateText(text string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
+// WrapText wraps plain text at the given width.
 func WrapText(text string, width int) string {
 	if width < 1 {
 		width = 1

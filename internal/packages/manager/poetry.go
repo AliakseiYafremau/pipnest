@@ -14,10 +14,12 @@ import (
 	"strings"
 )
 
+// PoetryManager implements PackageManager with poetry commands.
 type PoetryManager struct {
 	Binary string
 }
 
+// NewPoetryManager builds a PoetryManager using binary or "poetry".
 func NewPoetryManager(binary string) *PoetryManager {
 	if strings.TrimSpace(binary) == "" {
 		binary = "poetry"
@@ -26,6 +28,7 @@ func NewPoetryManager(binary string) *PoetryManager {
 	return &PoetryManager{Binary: binary}
 }
 
+// Install adds a dependency with poetry.
 func (m *PoetryManager) Install(ctx context.Context, pkgName string) error {
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
@@ -36,6 +39,7 @@ func (m *PoetryManager) Install(ctx context.Context, pkgName string) error {
 	return err
 }
 
+// InstallFromFile installs dependencies listed in a requirements file.
 func (m *PoetryManager) InstallFromFile(ctx context.Context, filePath string) error {
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
@@ -60,6 +64,7 @@ func (m *PoetryManager) InstallFromFile(ctx context.Context, filePath string) er
 	return err
 }
 
+// Freeze exports dependency versions to filePath.
 func (m *PoetryManager) Freeze(ctx context.Context, filePath string) error {
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" {
@@ -78,6 +83,7 @@ func (m *PoetryManager) Freeze(ctx context.Context, filePath string) error {
 	return nil
 }
 
+// List returns installed packages in the poetry environment.
 func (m *PoetryManager) List(ctx context.Context) ([]Dependency, error) {
 	out, err := m.run(ctx, "run", "pip", "list", "--format", "json")
 	if err != nil {
@@ -87,10 +93,12 @@ func (m *PoetryManager) List(ctx context.Context) ([]Dependency, error) {
 	return parsePackageListJSONOrTable(out)
 }
 
+// Search resolves package suggestions from PyPI.
 func (m *PoetryManager) Search(ctx context.Context, query string) ([]Dependency, error) {
 	return SearchPackages(ctx, query)
 }
 
+// Remove deletes a dependency with poetry.
 func (m *PoetryManager) Remove(ctx context.Context, pkgName string) error {
 	pkgName = strings.TrimSpace(pkgName)
 	if pkgName == "" {
@@ -101,10 +109,12 @@ func (m *PoetryManager) Remove(ctx context.Context, pkgName string) error {
 	return err
 }
 
+// Versions returns known package versions from PyPI.
 func (m *PoetryManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
 	return NewPipManager("pip").Versions(ctx, pkgName)
 }
 
+// RunPython executes Python code through poetry.
 func (m *PoetryManager) RunPython(ctx context.Context, code string) (string, error) {
 	if strings.TrimSpace(code) == "" {
 		return "", errors.New("python code cannot be empty")

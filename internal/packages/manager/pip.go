@@ -21,11 +21,13 @@ import (
 	"unicode"
 )
 
+// PipManager implements PackageManager with pip commands.
 type PipManager struct {
 	Binary     string
 	PythonPath string
 }
 
+// NewPipManager builds a PipManager using binary or the default "pip".
 func NewPipManager(binary string) *PipManager {
 	if strings.TrimSpace(binary) == "" {
 		binary = "pip"
@@ -39,6 +41,7 @@ func NewPipManager(binary string) *PipManager {
 	return m
 }
 
+// Install installs a package in the selected interpreter environment.
 func (m *PipManager) Install(ctx context.Context, pkgName string) error {
 	m.refreshEnvironment()
 
@@ -56,6 +59,7 @@ func (m *PipManager) Install(ctx context.Context, pkgName string) error {
 	return nil
 }
 
+// InstallFromFile installs dependencies from a requirements file.
 func (m *PipManager) InstallFromFile(ctx context.Context, filePath string) error {
 	m.refreshEnvironment()
 
@@ -73,6 +77,7 @@ func (m *PipManager) InstallFromFile(ctx context.Context, filePath string) error
 	return nil
 }
 
+// Freeze writes installed dependencies to filePath.
 func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
 	m.refreshEnvironment()
 
@@ -93,6 +98,7 @@ func (m *PipManager) Freeze(ctx context.Context, filePath string) error {
 	return nil
 }
 
+// List returns installed dependencies for the active environment.
 func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
 	m.refreshEnvironment()
 
@@ -118,6 +124,7 @@ func (m *PipManager) List(ctx context.Context) ([]Dependency, error) {
 	return parsePipTable(out), nil
 }
 
+// Search queries package information from pip.
 func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, error) {
 	m.refreshEnvironment()
 
@@ -154,6 +161,7 @@ func (m *PipManager) Search(ctx context.Context, query string) ([]Dependency, er
 	return []Dependency{{Name: query, Version: ""}}, nil
 }
 
+// Remove uninstalls a package and prunes removable transitive dependencies.
 func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
 	m.refreshEnvironment()
 
@@ -181,6 +189,7 @@ func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
 	return nil
 }
 
+// Versions returns known versions for a package from PyPI.
 func (m *PipManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
 	m.refreshEnvironment()
 
@@ -200,6 +209,7 @@ func (m *PipManager) Versions(ctx context.Context, pkgName string) ([]string, er
 	return versions, nil
 }
 
+// RunPython executes Python code in the selected environment.
 func (m *PipManager) RunPython(ctx context.Context, code string) (string, error) {
 	m.refreshEnvironment()
 

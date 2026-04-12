@@ -34,6 +34,7 @@ var (
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
 )
 
+// SearchPackages performs a fuzzy search over the PyPI simple index.
 func SearchPackages(ctx context.Context, query string) ([]Dependency, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
