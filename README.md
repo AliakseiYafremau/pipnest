@@ -1,6 +1,7 @@
 # pipnest
 
 `pipnest` es una TUI (terminal UI) para trabajar con dependencias de Python y entornos virtuales desde una única interfaz interactiva.
+`pipnest` is a terminal UI to manage Python dependencies and virtual environments from one workflow.
 
 ## Características
 
