@@ -38,3 +38,6 @@ pipnest
 requirements.txt
 
 .tmpdebug
+# Venv
+.venv
+venv
