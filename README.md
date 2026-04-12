@@ -1,3 +1,5 @@
+![Main menu](media/intro.png)
+
 # pipnest
 
 `pipnest` is a terminal UI to manage Python dependencies and virtual environments from one workflow.
