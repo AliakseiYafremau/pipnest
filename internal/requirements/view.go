@@ -1144,6 +1144,13 @@ func (m ViewModel) View() string {
 	helpLine := m.renderBottomHelp()
 	baseMain := mainPanes
 	if m.ModalOpen && !m.VersionFromMain {
+		if m.ManagerModalOpen {
+			managerModal := m.renderManagerModal()
+			managerX, managerY := centeredOverlayPosition(managerModal, m.Width, m.Height)
+			modalBase := overlayAt(stripANSI(baseMain), managerModal, managerX, managerY)
+			return lipgloss.JoinVertical(lipgloss.Left, modalBase, helpLine)
+		}
+
 		installView := m.renderInstallModal()
 		installBase := installView
 

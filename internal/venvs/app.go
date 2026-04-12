@@ -294,6 +294,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applySelection()
 		return m, tea.Quit
 	}
+	if msg.Type == tea.KeyEsc && m.dropdownOpen {
+		m.dropdownOpen = false
+		return m, nil
+	}
 	if msg.Type == tea.KeyRight {
 		if len(m.highlighted.Packages) > 0 {
 			m.focusPackages = true
@@ -583,6 +587,7 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.applySelection()
+	m.dropdownOpen = false
 	cmd := m.queueDetailsLoad(m.interpreters[m.selected])
 	return m, cmd
 }
@@ -716,27 +721,14 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.focusPackages = false
 			return m, m.queueDetailsLoad(m.interpreters[m.selected])
 		}
-		innerHeight := max(1, panelHeight-4)
-		start := 0
-		end := len(m.interpreters)
-		// Header now includes a two-part current-environment box (4 lines),
-		// plus spacer and selector title: 6 lines before the list starts.
-		availableRows := innerHeight - 6
-		if availableRows < 0 {
-			availableRows = 0
-		}
-		if availableRows < len(m.interpreters) {
-			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
-			end = start + availableRows
-		}
-		rowStartY := 8 // border+padding (2) + header lines (6)
-		idx := start + (y - rowStartY)
-		if y >= rowStartY && idx >= start && idx < end {
-			m.selected = idx
+		if selected, ok := m.interpreterSelectorIndexAt(x, y); ok {
+			m.selected = selected
 			m.applySelection()
+			m.dropdownOpen = false
 			m.focusPackages = false
 			return m, m.queueDetailsLoad(m.interpreters[m.selected])
 		}
+		m.dropdownOpen = false
 		return m, nil
 	}
 
@@ -759,6 +751,42 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m *Model) interpreterSelectorIndexAt(x, y int) (int, bool) {
+	if !m.dropdownOpen || len(m.interpreters) == 0 {
+		return 0, false
+	}
+
+	layout := m.interpreterSelectorLayout()
+	modalX := (m.view.Width - layout.modalWidth) / 2
+	if modalX < 0 {
+		modalX = 0
+	}
+	modalY := ((m.view.Height - 1) - layout.modalHeight) / 2
+	if modalY < 0 {
+		modalY = 0
+	}
+
+	if x < modalX || x >= modalX+layout.modalWidth || y < modalY || y >= modalY+layout.modalHeight {
+		return 0, false
+	}
+
+	innerX := x - modalX
+	innerY := y - modalY
+	if innerX <= 0 || innerX >= layout.modalWidth-1 {
+		return 0, false
+	}
+	if innerY < 4 {
+		return 0, false
+	}
+
+	index := layout.start + (innerY - 4)
+	if index < layout.start || index >= layout.end || index < 0 || index >= len(m.interpreters) {
+		return 0, false
+	}
+
+	return index, true
 }
 
 func (m *Model) legendActionAtX(x int) string {
