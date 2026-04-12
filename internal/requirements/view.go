@@ -2088,8 +2088,11 @@ func (m ViewModel) visibleVersionRows() int {
 }
 
 func (m ViewModel) visibleManagerRows() int {
-	rows := int(float64(m.Height) * 0.22)
-	rows -= 6
+	modalHeight := int(float64(m.Height) * 0.22)
+	if modalHeight < 7 {
+		modalHeight = 7
+	}
+	rows := modalHeight - 4 // inner height minus header and blank separator
 	if rows < 1 {
 		rows = 1
 	}
@@ -2707,17 +2710,17 @@ func (m ViewModel) installSelectedPackageName() string {
 }
 
 func (m ViewModel) renderManagerModal() string {
-	modalWidth := int(float64(m.Width) * 0.16)
-	if modalWidth < 20 {
-		modalWidth = 20
+	modalWidth := int(float64(m.Width) * 0.28)
+	if modalWidth < 30 {
+		modalWidth = 30
 	}
 	if modalWidth > m.Width-2 {
 		modalWidth = m.Width - 2
 	}
 
 	modalHeight := int(float64(m.Height) * 0.22)
-	if modalHeight < 6 {
-		modalHeight = 6
+	if modalHeight < 7 {
+		modalHeight = 7
 	}
 	if modalHeight > m.Height-2 {
 		modalHeight = m.Height - 2
@@ -2768,7 +2771,7 @@ func (m ViewModel) renderManagerModal() string {
 			if i == m.ManagerSelected {
 				prefix = "> "
 			}
-			line = TruncateText(prefix+line, modalWidth-8)
+			line = TruncateText(prefix+line, modalWidth-4)
 			if option.Available && i == m.ManagerSelected {
 				line = selectedStyle.Render(line)
 			} else if !option.Available {
