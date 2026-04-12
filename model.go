@@ -1,13 +1,16 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package main
 
 import (
-	"context"
-	requirements "pipnest/internal/packages"
 	"strings"
 
-	"pipnest/internal/cheatsheet"
-	pm "pipnest/internal/packages/manager"
-	"pipnest/internal/venvs"
+	requirements "github.com/Rotlerxd/pipnest/internal/packages"
+
+	"github.com/Rotlerxd/pipnest/internal/cheatsheet"
+	pm "github.com/Rotlerxd/pipnest/internal/packages/manager"
+	"github.com/Rotlerxd/pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -18,15 +21,6 @@ import (
 type searchResult = requirements.Result
 
 type searchDoneMsg = requirements.DoneMsg
-
-type requirementsDoneMsg struct {
-	Packages []pm.Dependency
-	Err      error
-}
-
-type installPkgDoneMsg struct {
-	Err error
-}
 
 type model struct {
 	// Navigation
@@ -48,15 +42,6 @@ type model struct {
 	loading      bool
 	searchLoader spinner.Model
 	err          error
-
-	// Requirements screen
-	installedPackages []pm.Dependency
-	selectedReqIdx    int
-	reqLoading        bool
-	reqErr            error
-	reqInput          textinput.Model
-	packageManager    pm.PackageManager
-	reqMode           string // "list" o "install"
 
 	// Cheatsheet screen
 	cheatSearch       textinput.Model
@@ -109,9 +94,6 @@ func initialModel() model {
 	cheatInput := textinput.New()
 	cheatInput.Placeholder = "Search commands..."
 
-	reqInput := textinput.New()
-	reqInput.Placeholder = "Package name to install..."
-
 	return model{
 		currentScreen:     ScreenMainMenu,
 		menuCursor:        0,
@@ -122,9 +104,6 @@ func initialModel() model {
 		cheatSelected:     0,
 		filteredCommands:  cheatsheet.CheatCommands,
 		cheatScrollOffset: 0,
-		reqInput:          reqInput,
-		packageManager:    pm.NewPipManager(""),
-		reqMode:           "list",
 	}
 }
 
@@ -814,36 +793,4 @@ func (m model) View() string {
 		return renderEasterEgg(m)
 	}
 	return ""
-}
-
-// Funciones asincrónicas para requirements
-
-func loadInstalledPackages(pkgMgr pm.PackageManager) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*1000*1000*1000) // 30s en nanosegundos
-		defer cancel()
-
-		packages, err := pkgMgr.List(ctx)
-		return requirementsDoneMsg{Packages: packages, Err: err}
-	}
-}
-
-func installPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
-		defer cancel()
-
-		err := pkgMgr.Install(ctx, pkgName)
-		return installPkgDoneMsg{Err: err}
-	}
-}
-
-func uninstallPackage(pkgMgr pm.PackageManager, pkgName string) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*1000*1000*1000) // 60s
-		defer cancel()
-
-		err := pkgMgr.Remove(ctx, pkgName)
-		return installPkgDoneMsg{Err: err}
-	}
 }

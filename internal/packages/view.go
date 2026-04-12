@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package packages
 
 import (
@@ -7,10 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	packagemanager "pipnest/internal/packages/manager"
 	"regexp"
 	"strings"
 	"time"
+
+	packagemanager "github.com/Rotlerxd/pipnest/internal/packages/manager"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -2176,7 +2180,6 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	if nameWidth < 8 {
 		nameWidth = 8
 	}
-
 
 	dimStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 	lines := []string{header, filterLine, ""}

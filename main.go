@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package main
 
 import (
@@ -5,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"pipnest/internal/venvs"
+	"github.com/Rotlerxd/pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"

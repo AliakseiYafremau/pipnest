@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package main
 
 // ScreenID identifies the app sections to support a future main menu + submenus.

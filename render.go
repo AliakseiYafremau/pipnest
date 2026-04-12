@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package main
 
 import (
@@ -11,7 +14,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"pipnest/internal/cheatsheet"
+	"github.com/Rotlerxd/pipnest/internal/cheatsheet"
 )
 
 var stripTagsPattern = regexp.MustCompile(`<[^>]+>`)

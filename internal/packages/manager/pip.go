@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package manager
 
 import (
@@ -167,10 +170,7 @@ func (m *PipManager) Remove(ctx context.Context, pkgName string) error {
 	}
 
 	orphans, err := removableOrphanDependencies(ctx, deps, m.runPip)
-	if err != nil {
-		return nil
-	}
-	if len(orphans) > 0 {
+	if err == nil && len(orphans) > 0 {
 		args := append([]string{"uninstall", "-y"}, orphans...)
 		if _, err := m.runPip(ctx, args...); err != nil {
 			return err

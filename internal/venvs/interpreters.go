@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package venvs
 
 import (
@@ -6,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -296,10 +298,6 @@ func isExecutableFile(fullPath string) bool {
 	if !info.Mode().IsRegular() {
 		return false
 	}
-	if runtime.GOOS == "windows" {
-		lower := strings.ToLower(fullPath)
-		return strings.HasSuffix(lower, ".exe") || strings.HasSuffix(lower, ".cmd") || strings.HasSuffix(lower, ".bat")
-	}
 	return info.Mode()&0o111 != 0
 }
 
@@ -398,24 +396,11 @@ func addCentralizedVenvs(add func(InterpreterOption)) {
 
 	// Common tool-agnostic and tool-specific directories.
 	dirs := []string{
-		filepath.Join(home, ".virtualenvs"),                      // virtualenvwrapper
-		filepath.Join(home, ".venvs"),                            // manual convention
-		filepath.Join(home, ".local", "share", "virtualenvs"),    // pipenv (Linux/macOS)
-		filepath.Join(home, ".cache", "pypoetry", "virtualenvs"), // poetry (Linux)
-	}
-
-	switch runtime.GOOS {
-	case "darwin":
-		dirs = append(dirs,
-			filepath.Join(home, "Library", "Caches", "pypoetry", "virtualenvs"), // poetry (macOS)
-		)
-	case "windows":
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			dirs = append(dirs, filepath.Join(appData, "pypoetry", "virtualenvs")) // poetry (Windows)
-		}
-		if userProfile := os.Getenv("USERPROFILE"); userProfile != "" {
-			dirs = append(dirs, filepath.Join(userProfile, ".virtualenvs")) // virtualenvwrapper (Windows)
-		}
+		filepath.Join(home, ".virtualenvs"),                                 // virtualenvwrapper
+		filepath.Join(home, ".venvs"),                                       // manual convention
+		filepath.Join(home, ".local", "share", "virtualenvs"),               // pipenv (Linux/macOS)
+		filepath.Join(home, ".cache", "pypoetry", "virtualenvs"),            // poetry (Linux)
+		filepath.Join(home, "Library", "Caches", "pypoetry", "virtualenvs"), // poetry (macOS)
 	}
 
 	for _, dir := range dirs {

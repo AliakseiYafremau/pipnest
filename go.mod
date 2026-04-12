@@ -1,4 +1,4 @@
-module pipnest
+module github.com/Rotlerxd/pipnest
 
 go 1.25
 
