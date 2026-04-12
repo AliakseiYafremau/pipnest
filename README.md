@@ -26,6 +26,9 @@ go get github.com/Rotlerxd/pipnest@latest
 go install github.com/Rotlerxd/pipnest@latest
 ```
 
+`go install` deja el ejecutable en `$(go env GOPATH)/bin` (o en `GOBIN` si lo configuraste).  
+Asegúrate de tener ese directorio en tu `PATH` para poder ejecutar `pipnest` directamente.
+
 ## Uso
 
 ```bash
@@ -65,7 +68,7 @@ go test ./...
 - Linux
 - macOS
 
-Windows no está soportado por diseño (build tags del proyecto).
+En Windows se puede instalar el ejecutable, pero la aplicación completa está soportada oficialmente en Linux y macOS.
 
 ## Licencia
 
