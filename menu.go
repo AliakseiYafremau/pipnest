@@ -8,17 +8,17 @@ type ScreenID string
 
 const (
 	// ScreenMainMenu is the top-level landing screen.
-	ScreenMainMenu     ScreenID = "main-menu"
+	ScreenMainMenu ScreenID = "main-menu"
 	// ScreenRequirements opens installed dependency management.
 	ScreenRequirements ScreenID = "requirements"
 	// ScreenPackages opens the PyPI search view.
-	ScreenPackages     ScreenID = "packages"
+	ScreenPackages ScreenID = "packages"
 	// ScreenVenvs opens interpreter and virtual environment management.
-	ScreenVenvs        ScreenID = "interpreters"
+	ScreenVenvs ScreenID = "interpreters"
 	// ScreenCheatSheet opens the Python command cheatsheet.
-	ScreenCheatSheet   ScreenID = "cheatsheet"
+	ScreenCheatSheet ScreenID = "cheatsheet"
 	// ScreenEasterEgg opens the hidden easter-egg screen.
-	ScreenEasterEgg    ScreenID = "easter-egg"
+	ScreenEasterEgg ScreenID = "easter-egg"
 )
 
 // MenuItem maps a menu label to its destination screen.

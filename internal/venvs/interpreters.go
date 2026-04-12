@@ -21,9 +21,9 @@ const (
 	// InterpreterGlobal marks a system/global interpreter.
 	InterpreterGlobal InterpreterKind = "global"
 	// InterpreterVenv marks a classic virtualenv/venv interpreter.
-	InterpreterVenv   InterpreterKind = "venv"
+	InterpreterVenv InterpreterKind = "venv"
 	// InterpreterConda marks an interpreter managed by conda.
-	InterpreterConda  InterpreterKind = "conda"
+	InterpreterConda InterpreterKind = "conda"
 )
 
 // InterpreterOption is a selectable interpreter entry in the UI.
