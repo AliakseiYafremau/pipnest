@@ -446,7 +446,7 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 // updateRequirements: Lógica para pantalla de requirements
 func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyRunes {
-		if !m.requirements.ModalOpen && !m.requirements.ActionModalOpen && !m.requirements.HelpModalOpen {
+		if !m.requirements.ModalOpen && !m.requirements.ActionModalOpen && !m.requirements.HelpModalOpen && !m.requirements.SearchMode {
 			runeKey := strings.ToLower(keyMsg.String())
 			if runeKey == "q" {
 				return m, tea.Quit
@@ -455,7 +455,7 @@ func (m model) updateRequirements(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyEsc {
-		if m.requirements.ModalOpen || m.requirements.ActionModalOpen || m.requirements.HelpModalOpen {
+		if m.requirements.ModalOpen || m.requirements.ActionModalOpen || m.requirements.HelpModalOpen || m.requirements.SearchMode {
 			var cmd tea.Cmd
 			m.requirements, cmd = m.requirements.Update(msg)
 			return m, cmd

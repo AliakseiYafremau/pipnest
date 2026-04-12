@@ -252,7 +252,7 @@ func renderMainMenu(m model) string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
 		sepStyle.Render("  |  "),
-		keyStyle.Render("R/I/C"), sepStyle.Render(": quick open"),
+		keyStyle.Render("P/I/C"), sepStyle.Render(": quick open"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("click"), sepStyle.Render(": select"),
 		sepStyle.Render("  |  "),

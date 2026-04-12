@@ -97,6 +97,9 @@ type ViewModel struct {
 	ActionModalKind    logKind
 	HelpModalOpen      bool
 
+	SearchMode  bool
+	SearchQuery string
+
 	LogText string
 	LogKind logKind
 
@@ -472,7 +475,78 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	return m, nil
 }
 
+// packageMatchesSearch reports whether a package name contains the query (case-insensitive).
+func packageMatchesSearch(name, query string) bool {
+	if query == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(name), strings.ToLower(query))
+}
+
+// searchNextMatch moves m.Selected to the next package matching the query, wrapping around.
+// direction: +1 = forward, -1 = backward. Returns true if a match was found.
+func (m *ViewModel) searchNextMatch(direction int) bool {
+	if len(m.Packages) == 0 || m.SearchQuery == "" {
+		return false
+	}
+	n := len(m.Packages)
+	start := m.Selected + direction
+	for i := 0; i < n; i++ {
+		idx := ((start + i*direction) % n + n) % n
+		if packageMatchesSearch(m.Packages[idx].Name, m.SearchQuery) {
+			m.Selected = idx
+			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			return true
+		}
+	}
+	return false
+}
+
+// jumpToFirstMatch sets m.Selected to the first package matching the current SearchQuery.
+func (m *ViewModel) jumpToFirstMatch() {
+	for i, pkg := range m.Packages {
+		if packageMatchesSearch(pkg.Name, m.SearchQuery) {
+			m.Selected = i
+			m.ensureMainSelectionVisible(m.visibleMainRows())
+			m.DetailsScroll = 0
+			return
+		}
+	}
+}
+
 func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
+	// Search mode: route most input to the search query.
+	if m.SearchMode {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.SearchMode = false
+			m.SearchQuery = ""
+			return m, nil
+		case tea.KeyEnter:
+			m.SearchMode = false
+			return m, nil
+		case tea.KeyBackspace, tea.KeyDelete:
+			if len(m.SearchQuery) > 0 {
+				runes := []rune(m.SearchQuery)
+				m.SearchQuery = string(runes[:len(runes)-1])
+				m.jumpToFirstMatch()
+			}
+			return m, nil
+		case tea.KeyUp, tea.KeyCtrlP:
+			m.searchNextMatch(-1)
+			return m, nil
+		case tea.KeyDown, tea.KeyCtrlN:
+			m.searchNextMatch(+1)
+			return m, nil
+		case tea.KeyRunes:
+			m.SearchQuery += msg.String()
+			m.jumpToFirstMatch()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyLeft:
 		m.FocusedPane = 0
@@ -596,6 +670,10 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			if m.DetailsScroll < 0 {
 				m.DetailsScroll = 0
 			}
+			return m, nil
+		case '/':
+			m.SearchMode = true
+			m.SearchQuery = ""
 			return m, nil
 		case 'i', 'I':
 			m.openModal()
@@ -1120,10 +1198,7 @@ func (m ViewModel) View() string {
 		rightStyle = focusedPaneStyle.Width(rightWidth).Height(paneHeight)
 	}
 
-	listRows := bodyHeight - 6
-	if listRows < 1 {
-		listRows = 1
-	}
+	listRows := m.visibleMainRows()
 
 	leftPane := leftStyle.Render(m.renderInstalledPackages(max(1, leftWidth), listRows))
 	if len(m.Packages) > listRows {
@@ -1796,6 +1871,9 @@ func (m ViewModel) nextAvailableManager(from int) int {
 
 func (m ViewModel) visibleMainRows() int {
 	rows := m.Height - 7
+	if m.SearchMode || m.SearchQuery != "" {
+		rows--
+	}
 	if rows < 1 {
 		rows = 1
 	}
@@ -1906,11 +1984,28 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		nameWidth = 8
 	}
 
+	// Search bar (shown when search mode is active or query is set)
+	var searchBar string
+	if m.SearchMode || m.SearchQuery != "" {
+		cursor := ""
+		if m.SearchMode {
+			cursor = "█"
+		}
+		prefix := lipgloss.NewStyle().Foreground(reqKeyColor).Bold(true).Render("/")
+		query := lipgloss.NewStyle().Foreground(reqValueColor).Render(m.SearchQuery + cursor)
+		searchBar = TruncateText(prefix+query, width-2)
+	}
+
+	dimStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
 	lines := []string{header, ""}
+	if searchBar != "" {
+		lines = append(lines, searchBar)
+	}
 	pkgLines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		dep := m.Packages[i]
 		selected := i == m.Selected
+		matches := packageMatchesSearch(dep.Name, m.SearchQuery)
 
 		name := dep.Name
 		if lipgloss.Width(name) > nameWidth {
@@ -1920,8 +2015,15 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		if pad < 0 {
 			pad = 0
 		}
-		nameCol := nameStyle.Render(name + strings.Repeat(" ", pad))
-		verCol := versionStyle.Render(dep.Version)
+
+		var nameCol, verCol string
+		if m.SearchQuery != "" && !matches {
+			nameCol = dimStyle.Render(name + strings.Repeat(" ", pad))
+			verCol = dimStyle.Render(dep.Version)
+		} else {
+			nameCol = nameStyle.Render(name + strings.Repeat(" ", pad))
+			verCol = versionStyle.Render(dep.Version)
+		}
 		row := TruncateText(lipgloss.JoinHorizontal(lipgloss.Top, nameCol, "  ", verCol), rowTextWidth)
 
 		if selected {
@@ -1933,7 +2035,18 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 	}
 
 	lines = append(lines, pkgLines...)
-	lines = append(lines, "", mutedStyle.Render(fmt.Sprintf("%d/%d", m.Selected+1, len(m.Packages))))
+
+	counter := fmt.Sprintf("%d/%d", m.Selected+1, len(m.Packages))
+	if m.SearchQuery != "" {
+		matchCount := 0
+		for _, pkg := range m.Packages {
+			if packageMatchesSearch(pkg.Name, m.SearchQuery) {
+				matchCount++
+			}
+		}
+		counter = fmt.Sprintf("%d matches  %d/%d", matchCount, m.Selected+1, len(m.Packages))
+	}
+	lines = append(lines, "", mutedStyle.Render(counter))
 	return strings.Join(lines, "\n")
 }
 
@@ -2896,8 +3009,22 @@ func (m ViewModel) renderBottomHelp() string {
 		return TruncateText(legend, m.Width)
 	}
 
+	if m.SearchMode {
+		leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
+			keyStyle.Render("↑/↓"), sepStyle.Render(": prev/next match"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Enter"), sepStyle.Render(": confirm"),
+			sepStyle.Render("  |  "),
+			keyStyle.Render("Esc"), sepStyle.Render(": clear search"),
+		)
+		spacer := lipgloss.NewStyle().Width(max(0, m.Width-lipgloss.Width(leftLegend))).Render("")
+		return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer)
+	}
+
 	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		keyStyle.Render("i"), sepStyle.Render(": install"),
+		sepStyle.Render("  |  "),
+		keyStyle.Render("/"), sepStyle.Render(": search"),
 		sepStyle.Render("  |  "),
 		keyStyle.Render("s"), sepStyle.Render(": manager"),
 		sepStyle.Render("  |  "),
@@ -2911,8 +3038,24 @@ func (m ViewModel) renderBottomHelp() string {
 		sepStyle.Render("  |  "),
 		keyStyle.Render("q"), sepStyle.Render(": quit"),
 	)
+	venvLabel := "global"
+	venvColor := reqGlobalColor
+	if env, err := packagemanager.GetCurrentEnvironment(); err == nil && env.InterpreterPath != "" {
+		venvLabel = env.InterpreterPath
+		if env.Kind == "venv" || env.Kind == "conda" {
+			venvColor = reqVenvColor
+		}
+		// Show only the venv name, not the full path
+		if base := filepath.Base(filepath.Dir(filepath.Dir(env.InterpreterPath))); base != "" && base != "." {
+			venvLabel = base
+		}
+	}
 	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Foreground(reqValueColor).Render("package manager:"),
+		lipgloss.NewStyle().Foreground(reqMutedColor).Render("venv:"),
+		lipgloss.NewStyle().Render(" "),
+		lipgloss.NewStyle().Foreground(venvColor).Render(venvLabel),
+		lipgloss.NewStyle().Foreground(reqMutedColor).Render("  |  "),
+		lipgloss.NewStyle().Foreground(reqValueColor).Render("manager:"),
 		lipgloss.NewStyle().Render(" "),
 		lipgloss.NewStyle().Foreground(reqKeyColor).Render(m.currentManagerKey()),
 	)

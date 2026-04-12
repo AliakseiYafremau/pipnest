@@ -511,18 +511,33 @@ func (m *Model) renderREPLModal() string {
 }
 
 func (m *Model) renderAddInterpreterModal() string {
-	formView := ""
-	if m.addForm != nil {
-		formView = m.addForm.View()
-	}
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor).Render("Add Interpreter"),
-		lipgloss.NewStyle().Foreground(mutedColor).Render("Enter: next/submit  Esc/q: cancel"),
-		"",
-		formView,
-	}
-	if m.addStatus != "" {
-		lines = append(lines, "", lipgloss.NewStyle().Foreground(mutedColor).Render(m.addStatus))
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor)
+	mutedStyle := lipgloss.NewStyle().Foreground(mutedColor)
+
+	var lines []string
+	if m.addCreating {
+		spinnerStr := m.addSpinner.View()
+		lines = []string{
+			titleStyle.Render("Add Interpreter"),
+			"",
+			lipgloss.JoinHorizontal(lipgloss.Top, spinnerStr, " Creating environment…"),
+			"",
+			mutedStyle.Render("Please wait"),
+		}
+	} else {
+		formView := ""
+		if m.addForm != nil {
+			formView = m.addForm.View()
+		}
+		lines = []string{
+			titleStyle.Render("Add Interpreter"),
+			mutedStyle.Render("Enter: next/submit  Esc/q: cancel"),
+			"",
+			formView,
+		}
+		if m.addStatus != "" {
+			lines = append(lines, "", mutedStyle.Render(m.addStatus))
+		}
 	}
 
 	modalWidth := max(56, min(m.view.Width-8, 100))

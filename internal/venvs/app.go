@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // BackMsg is sent when the user wants to return to the main menu.
@@ -66,6 +68,8 @@ type Model struct {
 	addForm            *huh.Form
 	addStatus          string
 	addFormData        *addInterpreterFormData
+	addCreating        bool
+	addSpinner         spinner.Model
 	globalInterpreters []InterpreterOption
 	activationCommand  string
 	activationMessage  string
@@ -78,6 +82,10 @@ type Model struct {
 
 // NewModel initialises a ready-to-use venvs Model.
 func NewModel() Model {
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = lipgloss.NewStyle().Foreground(venvKindColor)
+
 	m := Model{
 		view:               NewViewModel(),
 		interpreters:       ListInterpreters(),
@@ -85,6 +93,7 @@ func NewModel() Model {
 		startedWithVenv:    os.Getenv("VIRTUAL_ENV") != "",
 		detailsCache:       make(map[string]InterpreterDetails),
 		globalInterpreters: globalInterpretersFromPath(),
+		addSpinner:         sp,
 	}
 	m.restoreSelectionFromProject()
 	m.applySelection()
@@ -112,7 +121,15 @@ func (m *Model) Init() tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		if m.addCreating {
+			var cmd tea.Cmd
+			m.addSpinner, cmd = m.addSpinner.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 	case addInterpreterResultMsg:
+		m.addCreating = false
 		if msg.err != nil {
 			m.addStatus = msg.err.Error()
 			m.addModalOpen = true
@@ -216,6 +233,10 @@ func (m *Model) handleKeybindsModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleAddModalMessage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.addCreating {
+		// Block all input while the environment is being created.
+		return m, nil
+	}
 	if msg.String() == "q" || msg.Type == tea.KeyEsc {
 		m.addModalOpen = false
 		m.addForm = nil
@@ -474,7 +495,9 @@ func (m *Model) submitAddInterpreterForm() (tea.Model, tea.Cmd) {
 			m.addForm = m.buildAddForm()
 			return m, m.addForm.Init()
 		}
-		return m, createNewInterpreterCmd(m.addFormData.basePython, targetRoot, m.addFormData.inheritSite)
+		m.addCreating = true
+		m.addForm = nil
+		return m, tea.Batch(createNewInterpreterCmd(m.addFormData.basePython, targetRoot, m.addFormData.inheritSite), m.addSpinner.Tick)
 	}
 
 	existingPath := strings.TrimSpace(m.addFormData.existingPath)
@@ -483,7 +506,9 @@ func (m *Model) submitAddInterpreterForm() (tea.Model, tea.Cmd) {
 		m.addForm = m.buildAddForm()
 		return m, m.addForm.Init()
 	}
-	return m, useExistingInterpreterCmd(existingPath)
+	m.addCreating = true
+	m.addForm = nil
+	return m, tea.Batch(useExistingInterpreterCmd(existingPath), m.addSpinner.Tick)
 }
 
 func (m *Model) reloadInterpreters(selectedPath string) {
