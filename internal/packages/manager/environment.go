@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// CurrentEnvironment describes the interpreter selected for a project.
 type CurrentEnvironment struct {
 	ProjectPath     string
 	InterpreterPath string

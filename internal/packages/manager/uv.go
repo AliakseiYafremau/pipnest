@@ -14,12 +14,14 @@ import (
 	"strings"
 )
 
+// UVManager implements PackageManager with uv and optional pip fallback.
 type UVManager struct {
 	Binary     string
 	PythonPath string
 	fallback   PackageManager
 }
 
+// NewUVManager builds a UVManager using binary or "uv".
 func NewUVManager(binary string) *UVManager {
 	if strings.TrimSpace(binary) == "" {
 		binary = "uv"
@@ -135,6 +137,7 @@ func (m *UVManager) List(ctx context.Context) ([]Dependency, error) {
 	return parsePipTable(out), nil
 }
 
+// Search resolves package suggestions from PyPI.
 func (m *UVManager) Search(ctx context.Context, query string) ([]Dependency, error) {
 	if m.fallback != nil {
 		return m.fallback.Search(ctx, query)
@@ -177,6 +180,7 @@ func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
 	return nil
 }
 
+// Versions returns known package versions from PyPI.
 func (m *UVManager) Versions(ctx context.Context, pkgName string) ([]string, error) {
 	return NewPipManager("pip").Versions(ctx, pkgName)
 }

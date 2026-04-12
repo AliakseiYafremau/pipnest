@@ -1,97 +1,69 @@
 # pipnest
 
-pipnest is a terminal-based Python dependency manager with a clean interactive UI.
-It helps you search, install, and manage packages inside virtual environments.
+`pipnest` es una TUI (terminal UI) para trabajar con dependencias de Python y entornos virtuales desde una única interfaz interactiva.
 
-## Supported Platforms
+## Características
 
-This project is intentionally supported only on:
+- Búsqueda de paquetes en PyPI con ranking difuso.
+- Gestión de paquetes instalados (listar, instalar, desinstalar, freeze).
+- Gestión de intérpretes y entornos virtuales.
+- Cheatsheet integrado para comandos comunes de Python/pip.
+
+## Instalación
+
+### Como dependencia del módulo (go get)
+
+```bash
+go get github.com/Rotlerxd/pipnest@latest
+```
+
+### Como binario CLI
+
+```bash
+go install github.com/Rotlerxd/pipnest@latest
+```
+
+## Uso
+
+```bash
+pipnest
+```
+
+También puedes abrir una pantalla concreta:
+
+```bash
+pipnest -screen search
+pipnest -screen venvs
+```
+
+## Ejemplo rápido
+
+1. Ejecuta `pipnest`.
+2. Entra a **Packages**.
+3. Escribe un nombre de paquete (ej. `requests`) y presiona `Enter`.
+4. Navega los resultados y detalles con teclado/foco de panel.
+
+## Casos de uso
+
+- Equipos que mantienen varios entornos virtuales por proyecto.
+- Flujos rápidos de revisión de dependencias sin salir de terminal.
+- Soporte a onboarding de Python con referencias de comandos integradas.
+
+## Desarrollo
+
+```bash
+go fmt ./...
+go vet ./...
+go test ./...
+```
+
+## Plataformas soportadas
 
 - Linux
-- macOS (Darwin)
+- macOS
 
-Build constraints are enforced in source files, and unsupported systems fail compilation.
+Windows no está soportado por diseño (build tags del proyecto).
 
-## Quickstart
+## Licencia
 
-Install with Go:
-
-```bash
-go install github.com/Rotlerxd/pipnest@latest
-```
-
-Then run:
-
-```bash
-pipnest
-```
-
-## Binary Download
-
-Download the release binary:
-
-```
-curl -L https://github.com/Rotlerxd/pipnest/releases/download/v0.0.1/pipnest -o pipnest
-```
-
-Make it executable:
-
-```
-chmod +x pipnest
-```
-
-Move it to your PATH (optional, so you can run it without `./`):
-
-```
-sudo mv pipnest /usr/local/bin/pipnest
-```
-
-Run:
-
-```
-pipnest
-```
-
-## Usage Example
-
-Run pipnest and use the package search flow:
-
-```bash
-pipnest
-# Type a package name (for example: requests)
-# Press Enter to search
-# Use arrow keys to inspect package details
-```
-
-## Development
-
-Run tests:
-
-```bash
-go test ./...
-```
-
-Verify OS-restricted builds:
-
-```bash
-GOOS=linux GOARCH=amd64 go build ./...
-GOOS=darwin GOARCH=arm64 go build ./...
-GOOS=windows GOARCH=amd64 go build ./...
-```
-
-The Windows build should fail by design.
-
-## Publish Checklist
-
-```bash
-go mod tidy
-go test ./...
-git tag v0.1.0
-git push origin main --tags
-```
-
-Then users can install with:
-
-```bash
-go install github.com/Rotlerxd/pipnest@latest
-```
+MIT. Ver [`LICENSE`](./LICENSE).

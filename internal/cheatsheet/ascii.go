@@ -3,6 +3,7 @@
 
 package cheatsheet
 
+// LogoTitle is the banner art rendered in the main menu.
 const LogoTitle = "                                                                        ,----, \n" +
 	",-.----.           ,-.----.            ,--.                           ,/   .`| \n" +
 	"\\    /  \\     ,---,\\    /  \\         ,--.'|    ,---,.  .--.--.      ,`   .'  : \n" +
@@ -19,6 +20,7 @@ const LogoTitle = "                                                             
 	"`---'.|    '---'   `---'.|    ;   |.'      |   | ,'                            \n" +
 	"  `---`              `---`    '---'        `----'                              "
 
+// SnekArt is an alternate ASCII illustration shown in the UI.
 const SnekArt = `
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣴⣶⣶⣶⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠟⠛⢿⣿⡿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
@@ -88,4 +90,5 @@ const macarrones = `
 '
 `
 
+// Macarrones exposes the easter egg ASCII artwork.
 const Macarrones = macarrones

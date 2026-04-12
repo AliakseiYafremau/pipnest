@@ -24,6 +24,7 @@ var (
 	uiVersionColor  = lipgloss.Color("1")
 )
 
+// View renders the full interpreters management screen.
 func (m *Model) View() string {
 	if m.view.Width <= 0 || m.view.Height <= 0 {
 		return ""

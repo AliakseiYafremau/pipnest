@@ -18,6 +18,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// Result contains package information retrieved from PyPI.
 type Result struct {
 	Name        string
 	Version     string
@@ -26,11 +27,13 @@ type Result struct {
 	URL         string
 }
 
+// DoneMsg is emitted when a package search operation finishes.
 type DoneMsg struct {
 	Results []Result
 	Err     error
 }
 
+// DescriptionLoadedMsg carries package metadata loaded asynchronously.
 type DescriptionLoadedMsg struct {
 	Index  int
 	Result Result
@@ -55,6 +58,7 @@ var (
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
 )
 
+// Search returns a Bubble Tea command that searches PyPI package names.
 func Search(query string) tea.Cmd {
 	return func() tea.Msg {
 		results, err := fetchResults(query)
@@ -62,6 +66,7 @@ func Search(query string) tea.Cmd {
 	}
 }
 
+// FetchDescription returns a Bubble Tea command that loads package metadata.
 func FetchDescription(index int, name string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := fetchPackageMetadata(name)
@@ -227,11 +232,11 @@ func fuzzyScore(query, candidate string) int {
 	if candidate == query {
 		return 10_000 + len(candidate)
 	}
-	if strings.Contains(candidate, query) {
-		return 8_000 + len(query)
-	}
 	if strings.HasPrefix(candidate, query) {
 		return 9_000 + len(query)
+	}
+	if strings.Contains(candidate, query) {
+		return 8_000 + len(query)
 	}
 
 	distance := levenshteinDistance(query, candidate)

@@ -116,6 +116,7 @@ func NewModel() Model {
 	return m
 }
 
+// Init implements Bubble Tea initialization for the interpreters screen.
 func (m *Model) Init() tea.Cmd {
 	// Load highlighted interpreter details asynchronously
 	if len(m.interpreters) > 0 {
@@ -124,10 +125,12 @@ func (m *Model) Init() tea.Cmd {
 	return nil
 }
 
+// IsLoading reports whether this screen is running background work.
 func (m *Model) IsLoading() bool {
 	return m.addLoading || m.loadingPath != ""
 }
 
+// Update handles messages for the interpreters screen.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case addInterpreterResultMsg:
