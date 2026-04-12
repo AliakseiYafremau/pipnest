@@ -10,6 +10,7 @@ import (
 	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -45,6 +46,7 @@ type model struct {
 	detailScroll int
 	focusedPane  int // 0 = list, 1 = detail
 	loading      bool
+	searchLoader spinner.Model
 	err          error
 
 	// Requirements screen
@@ -66,6 +68,9 @@ type model struct {
 
 	// Venvs screen
 	venvsApp *venvs.Model
+
+	activationCommand string
+	activationMessage string
 }
 
 var konamiSequence = []tea.KeyType{
@@ -95,6 +100,9 @@ const (
 )
 
 func initialModel() model {
+	loader := spinner.New()
+	loader.Spinner = spinner.Dot
+
 	ti := textinput.New()
 	ti.Placeholder = "Search PyPI packages..."
 
@@ -109,6 +117,7 @@ func initialModel() model {
 		menuCursor:        0,
 		requirements:      requirements.NewViewModel(),
 		input:             ti,
+		searchLoader:      loader,
 		cheatSearch:       cheatInput,
 		cheatSelected:     0,
 		filteredCommands:  cheatsheet.CheatCommands,
@@ -124,6 +133,41 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if tickMsg, ok := msg.(spinner.TickMsg); ok {
+		var cmds []tea.Cmd
+
+		if m.currentScreen == ScreenPackages && m.loading {
+			var cmd tea.Cmd
+			m.searchLoader, cmd = m.searchLoader.Update(tickMsg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if m.requirements.IsLoading() {
+			var cmd tea.Cmd
+			m.requirements, cmd = m.requirements.Update(tickMsg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if m.venvsApp != nil && m.venvsApp.IsLoading() {
+			updated, cmd := m.venvsApp.Update(tickMsg)
+			if vm, ok := updated.(*venvs.Model); ok {
+				m.venvsApp = vm
+			}
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+
+		if len(cmds) == 1 {
+			return m, cmds[0]
+		}
+		if len(cmds) > 1 {
+			return m, tea.Batch(cmds...)
+		}
+	}
+
 	// Handle Ctrl+C globally
 	if keyMsg, ok := msg.(tea.KeyMsg); ok && keyMsg.Type == tea.KeyCtrlC {
 		return m, tea.Quit
@@ -131,6 +175,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle back navigation from venvs screen
 	if _, ok := msg.(venvs.BackMsg); ok {
+		if m.venvsApp != nil {
+			m.activationCommand = m.venvsApp.ActivationCommand()
+			m.activationMessage = m.venvsApp.ActivationMessage()
+		}
 		m.currentScreen = ScreenMainMenu
 		return m, nil
 	}
@@ -256,6 +304,14 @@ func (m model) activateMainMenuSelection() (tea.Model, tea.Cmd) {
 	m.konamiIndex = 0
 
 	if m.currentScreen == ScreenRequirements {
+		if env, err := pm.GetCurrentEnvironment(); err == nil && strings.TrimSpace(env.InterpreterPath) != "" {
+			m.requirements.Interpreter = strings.TrimSpace(env.InterpreterPath)
+			m.requirements.InterpreterKind = strings.TrimSpace(env.Kind)
+		} else {
+			interpreter, kind := venvs.DetectInterpreter()
+			m.requirements.Interpreter = interpreter
+			m.requirements.InterpreterKind = string(kind)
+		}
 		var sizeCmd tea.Cmd
 		m.requirements, sizeCmd = m.requirements.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		if len(m.requirements.Packages) > 0 && !m.requirements.LoadingList {
@@ -384,7 +440,7 @@ func (m model) updatePackages(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScroll = 0
 			m.listScroll = 0
 			m.focusedPane = 0
-			return m, requirements.Search(query)
+			return m, tea.Batch(requirements.Search(query), m.searchLoader.Tick)
 		}
 	case tea.MouseMsg:
 		if msg.Type == tea.MouseWheelUp {
@@ -482,6 +538,8 @@ func (m model) updateVenvs(msg tea.Msg) (tea.Model, tea.Cmd) {
 	updated, cmd := m.venvsApp.Update(msg)
 	if vm, ok := updated.(*venvs.Model); ok {
 		m.venvsApp = vm
+		m.activationCommand = vm.ActivationCommand()
+		m.activationMessage = vm.ActivationMessage()
 	}
 	return m, cmd
 }
@@ -535,6 +593,89 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+	case tea.MouseMsg:
+		if m.width == 0 || m.height == 0 {
+			return m, nil
+		}
+
+		layout := cheatScreenLayout(m.width, m.height)
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			if layout.inSearch(msg.X, msg.Y) {
+				return m, nil
+			}
+			if layout.inList(msg.X, msg.Y) || m.cheatFocusedPane == 0 {
+				if m.cheatSelected > 0 {
+					m.cheatSelected--
+					m.cheatDetailScroll = 0
+				}
+				if m.cheatSelected < m.cheatScrollOffset {
+					m.cheatScrollOffset = m.cheatSelected
+				}
+				return m, nil
+			}
+			if layout.inDetail(msg.X, msg.Y) || m.cheatFocusedPane == 1 {
+				m.cheatDetailScroll -= 3
+				if m.cheatDetailScroll < 0 {
+					m.cheatDetailScroll = 0
+				}
+			}
+			return m, nil
+		case tea.MouseWheelDown:
+			if layout.inSearch(msg.X, msg.Y) {
+				return m, nil
+			}
+			if layout.inList(msg.X, msg.Y) || m.cheatFocusedPane == 0 {
+				if m.cheatSelected < len(m.filteredCommands)-1 {
+					m.cheatSelected++
+					m.cheatDetailScroll = 0
+				}
+				maxScroll := max(0, len(m.filteredCommands)-layout.visibleLines)
+				if m.cheatSelected >= m.cheatScrollOffset+layout.visibleLines {
+					m.cheatScrollOffset = m.cheatSelected - layout.visibleLines + 1
+				}
+				if m.cheatScrollOffset > maxScroll {
+					m.cheatScrollOffset = maxScroll
+				}
+				return m, nil
+			}
+			if layout.inDetail(msg.X, msg.Y) || m.cheatFocusedPane == 1 {
+				m.cheatDetailScroll += 3
+			}
+			return m, nil
+		case tea.MouseLeft:
+			if layout.inSearch(msg.X, msg.Y) {
+				m.cheatSearch.Focus()
+				return m, nil
+			}
+
+			m.cheatSearch.Blur()
+			if layout.inList(msg.X, msg.Y) {
+				row := msg.Y - layout.listContentTop
+				if row >= 0 && row < layout.visibleLines {
+					idx := m.cheatScrollOffset + row
+					if idx >= 0 && idx < len(m.filteredCommands) {
+						m.cheatFocusedPane = 0
+						m.cheatSelected = idx
+						m.cheatDetailScroll = 0
+						if m.cheatSelected < m.cheatScrollOffset {
+							m.cheatScrollOffset = m.cheatSelected
+						}
+						if m.cheatSelected >= m.cheatScrollOffset+layout.visibleLines {
+							m.cheatScrollOffset = m.cheatSelected - layout.visibleLines + 1
+						}
+						return m, nil
+					}
+				}
+				m.cheatFocusedPane = 0
+				return m, nil
+			}
+			if layout.inDetail(msg.X, msg.Y) {
+				m.cheatFocusedPane = 1
+				return m, nil
+			}
+		}
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -572,6 +713,68 @@ func (m model) updateCheat(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+type cheatScreenLayoutInfo struct {
+	searchRows     int
+	contentTop     int
+	contentHeight  int
+	listWidth      int
+	detailsWidth   int
+	visibleLines   int
+	listContentTop int
+	listContentEnd int
+	detailContentX int
+}
+
+func cheatScreenLayout(width int, height int) cheatScreenLayoutInfo {
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	contentHeight := height - 5
+	if contentHeight < 8 {
+		contentHeight = 8
+	}
+	visibleLines := contentHeight - 2
+	if visibleLines < 1 {
+		visibleLines = 1
+	}
+	listWidth := (width - 5) / 2
+	detailsWidth := width - 5 - listWidth
+	contentTop := 4
+	return cheatScreenLayoutInfo{
+		searchRows:     4,
+		contentTop:     contentTop,
+		contentHeight:  contentHeight,
+		listWidth:      listWidth,
+		detailsWidth:   detailsWidth,
+		visibleLines:   visibleLines,
+		listContentTop: contentTop + 1,
+		listContentEnd: contentTop + 1 + visibleLines,
+		detailContentX: listWidth + 1,
+	}
+}
+
+func (l cheatScreenLayoutInfo) inSearch(x, y int) bool {
+	return x >= 0 && y >= 0 && y < l.searchRows
+}
+
+func (l cheatScreenLayoutInfo) inList(x, y int) bool {
+	if x < 0 || y < l.listContentTop || y >= l.listContentEnd {
+		return false
+	}
+	return x < l.listWidth
+}
+
+func (l cheatScreenLayoutInfo) inDetail(x, y int) bool {
+	if x < l.detailContentX || y < l.listContentTop || y >= l.listContentEnd {
+		return false
+	}
+	return x < l.detailContentX+l.detailsWidth
+}
+
 func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -588,10 +791,11 @@ func (m model) updateEasterEgg(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) ActivationMessage() string {
-	if m.venvsApp != nil {
-		return m.venvsApp.ActivationMessage()
-	}
-	return ""
+	return m.activationMessage
+}
+
+func (m model) ActivationCommand() string {
+	return m.activationCommand
 }
 
 func (m model) View() string {

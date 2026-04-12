@@ -49,11 +49,6 @@ func (m *Model) View() string {
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 	ui := lipgloss.Place(m.view.Width, bodyHeight, lipgloss.Center, lipgloss.Top, row)
-	if m.dropdownOpen {
-		selector := m.renderInterpreterSelectorModal()
-		x, y := centeredOverlayPosition(selector, m.view.Width, m.view.Height-1)
-		ui = overlayAt(ui, selector, x, y)
-	}
 
 	if m.addModalOpen {
 		ui = m.renderAddInterpreterModal()
@@ -67,82 +62,6 @@ func (m *Model) View() string {
 		ui = m.renderKeybindsModal()
 	}
 	return strings.TrimRight(ui, "\n") + "\n" + legend
-}
-
-type interpreterSelectorLayout struct {
-	modalWidth   int
-	modalHeight  int
-	innerWidth   int
-	innerHeight  int
-	rowTextWidth int
-	start        int
-	end          int
-}
-
-func (m *Model) interpreterSelectorLayout() interpreterSelectorLayout {
-	modalWidth := max(52, m.view.Width-10)
-	if modalWidth > 96 {
-		modalWidth = 96
-	}
-	if modalWidth > m.view.Width-4 {
-		modalWidth = m.view.Width - 4
-	}
-	if modalWidth < 24 {
-		modalWidth = 24
-	}
-
-	modalHeight := int(float64(m.view.Height) * 0.46)
-	if modalHeight < 10 {
-		modalHeight = 10
-	}
-	if modalHeight > 20 {
-		modalHeight = 20
-	}
-	if modalHeight > m.view.Height-4 {
-		modalHeight = m.view.Height - 4
-	}
-	if modalHeight < 8 {
-		modalHeight = 8
-	}
-
-	innerWidth := modalWidth - 2
-	if innerWidth < 1 {
-		innerWidth = 1
-	}
-	innerHeight := modalHeight - 2
-	if innerHeight < 1 {
-		innerHeight = 1
-	}
-
-	visibleRows := innerHeight - 3
-	if visibleRows < 1 {
-		visibleRows = 1
-	}
-
-	selected := m.selected
-	if selected < 0 {
-		selected = 0
-	}
-	if selected >= len(m.interpreters) && len(m.interpreters) > 0 {
-		selected = len(m.interpreters) - 1
-	}
-
-	start := 0
-	end := len(m.interpreters)
-	if len(m.interpreters) > visibleRows {
-		start = clamp(selected-(visibleRows/2), 0, max(0, len(m.interpreters)-visibleRows))
-		end = start + visibleRows
-	}
-
-	return interpreterSelectorLayout{
-		modalWidth:   modalWidth,
-		modalHeight:  modalHeight,
-		innerWidth:   innerWidth,
-		innerHeight:  innerHeight,
-		rowTextWidth: max(1, innerWidth-2),
-		start:        start,
-		end:          end,
-	}
 }
 
 func (m *Model) renderInsufficientSpace() string {
@@ -269,7 +188,7 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 	// Show loading state if details are being fetched
 	if m.loadingPath == path && len(details.Packages) == 0 && details.Version == "" {
 		if len(lines) < innerHeight {
-			lines = append(lines, kindStyle.Render("Loading..."))
+			lines = append(lines, kindStyle.Render(strings.TrimSpace(m.addSpinner.View()+" Loading...")))
 		}
 	} else if len(details.Packages) == 0 {
 		if len(lines) < innerHeight {
@@ -341,141 +260,64 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 		Render(strings.Join(lines, "\n"))
 }
 
-func (m *Model) renderInterpreterSelectorModal() string {
-	layout := m.interpreterSelectorLayout()
-	modalStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(uiTitleColor).
-		Width(layout.modalWidth).
-		Height(layout.modalHeight)
-
-	title := lipgloss.NewStyle().Bold(true).Foreground(uiTitleColor).Render("Select interpreter")
-	hint := lipgloss.NewStyle().Foreground(mutedColor).Render("Enter: select   Esc: close")
-	muted := lipgloss.NewStyle().Foreground(mutedColor)
-	selectedStyle := lipgloss.NewStyle().Reverse(true).Bold(true)
-
-	lines := []string{title, hint, ""}
-	if len(m.interpreters) == 0 {
-		lines = append(lines, muted.Render("No interpreters found"))
-	} else {
-		labelColWidth := 8
-		for i := layout.start; i < layout.end; i++ {
-			if w := lipgloss.Width(m.interpreters[i].Label); w > labelColWidth {
-				labelColWidth = w
-			}
-		}
-		maxLabelCol := max(8, (layout.rowTextWidth-7)/2)
-		if labelColWidth > maxLabelCol {
-			labelColWidth = maxLabelCol
-		}
-
-		rows := make([]string, 0, max(0, layout.end-layout.start))
-		for i := layout.start; i < layout.end; i++ {
-			option := m.interpreters[i]
-			selected := i == m.selected
-			active := option.Path != "" && option.Path == m.view.Interpreter
-			row := m.renderInterpreterRow(option, selected, active, labelColWidth, layout.rowTextWidth)
-			if selected {
-				row = selectedStyle.Render(row)
-			}
-			rows = append(rows, row)
-		}
-		if len(m.interpreters) > (layout.end-layout.start) && (layout.end-layout.start) > 0 {
-			trackStyle := lipgloss.NewStyle().Foreground(mutedColor)
-			thumbStyle := lipgloss.NewStyle().Foreground(uiTitleColor)
-			rows = addScrollbar(rows, layout.end-layout.start, len(m.interpreters), layout.start, layout.rowTextWidth+2, trackStyle, thumbStyle)
-		}
-		lines = append(lines, rows...)
-	}
-
-	lines = normalizeVenvViewportLines(lines, layout.innerWidth, layout.innerHeight)
-	return modalStyle.Render(strings.Join(lines, "\n"))
-}
-
-func overlayAt(base string, overlay string, x int, y int) string {
-	baseLines := strings.Split(base, "\n")
-	overlayLines := strings.Split(overlay, "\n")
-
-	if x < 0 {
-		x = 0
-	}
-	if y < 0 {
-		y = 0
-	}
-
-	for i, line := range overlayLines {
-		target := y + i
-		if target < 0 || target >= len(baseLines) {
-			continue
-		}
-
-		baseRunes := []rune(stripANSI(baseLines[target]))
-		overlayVisibleRunes := []rune(stripANSI(line))
-		overlayWidth := len(overlayVisibleRunes)
-		if overlayWidth == 0 {
-			continue
-		}
-
-		needed := x + overlayWidth
-		if len(baseRunes) < needed {
-			baseRunes = append(baseRunes, []rune(strings.Repeat(" ", needed-len(baseRunes)))...)
-		}
-
-		prefix := string(baseRunes[:x])
-		suffix := ""
-		if needed < len(baseRunes) {
-			suffix = string(baseRunes[needed:])
-		}
-		baseLines[target] = prefix + line + suffix
-	}
-
-	return strings.Join(baseLines, "\n")
-}
-
-func centeredOverlayPosition(content string, width int, height int) (int, int) {
-	modalWidth := lipgloss.Width(stripANSI(content))
-	modalHeight := lipgloss.Height(stripANSI(content))
-	x := (width - modalWidth) / 2
-	if x < 0 {
-		x = 0
-	}
-	y := (height - modalHeight) / 2
-	if y < 0 {
-		y = 0
-	}
-	return x, y
-}
-
-func stripANSI(s string) string {
-	return venvAnsiStripRe.ReplaceAllString(s, "")
-}
-
 func (m *Model) renderLegend() string {
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(uiKeyColor)
 	sepStyle := lipgloss.NewStyle().Foreground(mutedColor)
+	separator := sepStyle.Render("  |  ")
 
-	leftLegend := lipgloss.JoinHorizontal(lipgloss.Top,
-		keyStyle.Render("Enter"), sepStyle.Render(": select"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("a"), sepStyle.Render(": add"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("r"), sepStyle.Render(": REPL"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("x"), sepStyle.Render(": run file"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("?"), sepStyle.Render(": help"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("q"), sepStyle.Render(": quit"),
-	)
+	leftChunks := []string{
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Enter"), sepStyle.Render(": select")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("a"), sepStyle.Render(": add")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("r"), sepStyle.Render(": REPL")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("x"), sepStyle.Render(": run file")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Esc"), sepStyle.Render(": menu")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("q"), sepStyle.Render(": quit")),
+	}
 	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Foreground(accentForKind(InterpreterGlobal)).Render("global"),
 		lipgloss.NewStyle().Render(" / "),
 		lipgloss.NewStyle().Foreground(accentForKind(InterpreterVenv)).Render("venv"),
 	)
+	leftMax := max(1, m.view.Width-lipgloss.Width(rightLegend)-1)
+	leftLegend := fitVenvLegendChunks(leftChunks, separator, leftMax, keyStyle, sepStyle)
 	spacer := lipgloss.NewStyle().Width(max(0, m.view.Width-lipgloss.Width(leftLegend)-lipgloss.Width(rightLegend))).Render("")
 	return lipgloss.JoinHorizontal(lipgloss.Top, leftLegend, spacer, rightLegend)
+}
+
+func fitVenvLegendChunks(chunks []string, separator string, width int, keyStyle lipgloss.Style, sepStyle lipgloss.Style) string {
+	if width <= 0 || len(chunks) == 0 {
+		return ""
+	}
+
+	included := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		candidate := strings.Join(append(append([]string{}, included...), chunk), separator)
+		if lipgloss.Width(venvAnsiStripRe.ReplaceAllString(candidate, "")) <= width {
+			included = append(included, chunk)
+			continue
+		}
+		break
+	}
+
+	hidden := len(chunks) - len(included)
+	if hidden <= 0 {
+		return strings.Join(included, separator)
+	}
+
+	for {
+		overflowChunk := lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("?"), sepStyle.Render(fmt.Sprintf(": +%d", hidden)))
+		candidateParts := append(append([]string{}, included...), overflowChunk)
+		candidate := strings.Join(candidateParts, separator)
+		if lipgloss.Width(venvAnsiStripRe.ReplaceAllString(candidate, "")) <= width {
+			return candidate
+		}
+		if len(included) == 0 {
+			plain := venvAnsiStripRe.ReplaceAllString(overflowChunk, "")
+			return truncateLine(plain, width)
+		}
+		included = included[:len(included)-1]
+		hidden++
+	}
 }
 
 func (m *Model) renderREPLModal() string {
@@ -529,9 +371,22 @@ func (m *Model) renderAddInterpreterModal() string {
 		if m.addForm != nil {
 			formView = m.addForm.View()
 		}
+		helpText := "Enter: next/submit  Esc/q: cancel"
+		if m.addLoading {
+			helpText = "Working... please wait"
+			if m.addStatus != "" {
+				helpText = m.addStatus
+			}
+			formView = lipgloss.JoinHorizontal(
+				lipgloss.Center,
+				m.addSpinner.View(),
+				" ",
+				"Working on your interpreter setup",
+			)
+		}
 		lines = []string{
 			titleStyle.Render("Add Interpreter"),
-			mutedStyle.Render("Enter: next/submit  Esc/q: cancel"),
+			mutedStyle.Render(helpText),
 			"",
 			formView,
 		}
@@ -577,7 +432,7 @@ func (m *Model) renderKeybindsModal() string {
 		key.Render("x") + detail.Render("  run a Python file with selected interpreter"),
 		key.Render("Mouse wheel") + detail.Render("  scroll package list"),
 		"",
-		muted.Render("Close help: Esc, ?, or q"),
+		muted.Render("Close help: Esc, or q"),
 	}
 
 	modalWidth := min(max(56, m.view.Width-12), 90)

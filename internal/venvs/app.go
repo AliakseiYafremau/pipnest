@@ -67,6 +67,8 @@ type Model struct {
 	addModalOpen       bool
 	addForm            *huh.Form
 	addStatus          string
+	addLoading         bool
+	addSpinner         spinner.Model
 	addFormData        *addInterpreterFormData
 	addCreating        bool
 	addSpinner         spinner.Model
@@ -82,10 +84,6 @@ type Model struct {
 
 // NewModel initialises a ready-to-use venvs Model.
 func NewModel() Model {
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(venvKindColor)
-
 	m := Model{
 		view:               NewViewModel(),
 		interpreters:       ListInterpreters(),
@@ -93,7 +91,6 @@ func NewModel() Model {
 		startedWithVenv:    os.Getenv("VIRTUAL_ENV") != "",
 		detailsCache:       make(map[string]InterpreterDetails),
 		globalInterpreters: globalInterpretersFromPath(),
-		addSpinner:         sp,
 	}
 	m.restoreSelectionFromProject()
 	m.applySelection()
@@ -119,17 +116,13 @@ func (m *Model) Init() tea.Cmd {
 	return nil
 }
 
+func (m *Model) IsLoading() bool {
+	return m.addLoading || m.loadingPath != ""
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case spinner.TickMsg:
-		if m.addCreating {
-			var cmd tea.Cmd
-			m.addSpinner, cmd = m.addSpinner.Update(msg)
-			return m, cmd
-		}
-		return m, nil
 	case addInterpreterResultMsg:
-		m.addCreating = false
 		if msg.err != nil {
 			m.addStatus = msg.err.Error()
 			m.addModalOpen = true
@@ -233,10 +226,6 @@ func (m *Model) handleKeybindsModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleAddModalMessage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.addCreating {
-		// Block all input while the environment is being created.
-		return m, nil
-	}
 	if msg.String() == "q" || msg.Type == tea.KeyEsc {
 		m.addModalOpen = false
 		m.addForm = nil
@@ -315,10 +304,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applySelection()
 		return m, tea.Quit
 	}
-	if msg.Type == tea.KeyEsc && m.dropdownOpen {
-		m.dropdownOpen = false
-		return m, nil
-	}
 	if msg.Type == tea.KeyRight {
 		if len(m.highlighted.Packages) > 0 {
 			m.focusPackages = true
@@ -339,6 +324,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.addModalOpen = true
 		m.replModalOpen = false
 		m.addStatus = ""
+		m.addLoading = false
 		newPath := ".venv"
 		if wd, err := os.Getwd(); err == nil {
 			newPath = filepath.Join(wd, ".venv")
@@ -359,6 +345,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.addForm.Init()
 	}
 	if msg.Type == tea.KeyEsc {
+		m.applySelection()
 		return m, func() tea.Msg { return BackMsg{} }
 	}
 	if msg.Type == tea.KeyEnter {
@@ -495,9 +482,7 @@ func (m *Model) submitAddInterpreterForm() (tea.Model, tea.Cmd) {
 			m.addForm = m.buildAddForm()
 			return m, m.addForm.Init()
 		}
-		m.addCreating = true
-		m.addForm = nil
-		return m, tea.Batch(createNewInterpreterCmd(m.addFormData.basePython, targetRoot, m.addFormData.inheritSite), m.addSpinner.Tick)
+		return m, createNewInterpreterCmd(m.addFormData.basePython, targetRoot, m.addFormData.inheritSite)
 	}
 
 	existingPath := strings.TrimSpace(m.addFormData.existingPath)
@@ -506,9 +491,7 @@ func (m *Model) submitAddInterpreterForm() (tea.Model, tea.Cmd) {
 		m.addForm = m.buildAddForm()
 		return m, m.addForm.Init()
 	}
-	m.addCreating = true
-	m.addForm = nil
-	return m, tea.Batch(useExistingInterpreterCmd(existingPath), m.addSpinner.Tick)
+	return m, useExistingInterpreterCmd(existingPath)
 }
 
 func (m *Model) reloadInterpreters(selectedPath string) {
@@ -612,7 +595,6 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.applySelection()
-	m.dropdownOpen = false
 	cmd := m.queueDetailsLoad(m.interpreters[m.selected])
 	return m, cmd
 }
@@ -699,11 +681,6 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.keybindsModalOpen = true
 			return m, nil
 		case "menu":
-			if m.dropdownOpen {
-				m.dropdownOpen = false
-				m.focusPackages = false
-				return m, nil
-			}
 			if m.focusPackages {
 				m.focusPackages = false
 				return m, nil
@@ -738,22 +715,28 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	rightXEnd := rightXStart + rightWidth
 
 	if x >= leftXStart && x < leftXEnd {
-		if !m.dropdownOpen {
-			if len(m.interpreters) == 0 {
-				return m, nil
-			}
-			m.dropdownOpen = true
-			m.focusPackages = false
-			return m, m.queueDetailsLoad(m.interpreters[m.selected])
+		if len(m.interpreters) == 0 {
+			return m, nil
 		}
-		if selected, ok := m.interpreterSelectorIndexAt(x, y); ok {
-			m.selected = selected
+		m.focusPackages = false
+		innerHeight := max(1, panelHeight-4)
+		availableRows := innerHeight - 2 // title + blank
+		if availableRows < 0 {
+			availableRows = 0
+		}
+		start := 0
+		end := len(m.interpreters)
+		if availableRows < len(m.interpreters) {
+			start = clamp(m.selected-(availableRows/2), 0, max(0, len(m.interpreters)-availableRows))
+			end = start + availableRows
+		}
+		rowStartY := 4 // border(1) + padding(1) + title(1) + blank(1)
+		idx := start + (y - rowStartY)
+		if y >= rowStartY && idx >= start && idx < end {
+			m.selected = idx
 			m.applySelection()
-			m.dropdownOpen = false
-			m.focusPackages = false
 			return m, m.queueDetailsLoad(m.interpreters[m.selected])
 		}
-		m.dropdownOpen = false
 		return m, nil
 	}
 
@@ -778,42 +761,6 @@ func (m *Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) interpreterSelectorIndexAt(x, y int) (int, bool) {
-	if !m.dropdownOpen || len(m.interpreters) == 0 {
-		return 0, false
-	}
-
-	layout := m.interpreterSelectorLayout()
-	modalX := (m.view.Width - layout.modalWidth) / 2
-	if modalX < 0 {
-		modalX = 0
-	}
-	modalY := ((m.view.Height - 1) - layout.modalHeight) / 2
-	if modalY < 0 {
-		modalY = 0
-	}
-
-	if x < modalX || x >= modalX+layout.modalWidth || y < modalY || y >= modalY+layout.modalHeight {
-		return 0, false
-	}
-
-	innerX := x - modalX
-	innerY := y - modalY
-	if innerX <= 0 || innerX >= layout.modalWidth-1 {
-		return 0, false
-	}
-	if innerY < 4 {
-		return 0, false
-	}
-
-	index := layout.start + (innerY - 4)
-	if index < layout.start || index >= layout.end || index < 0 || index >= len(m.interpreters) {
-		return 0, false
-	}
-
-	return index, true
-}
-
 func (m *Model) legendActionAtX(x int) string {
 	if x < 0 {
 		return ""
@@ -826,7 +773,6 @@ func (m *Model) legendActionAtX(x int) string {
 		{label: "j/k + ↑/↓: move", action: ""},
 		{label: "r: REPL", action: "repl"},
 		{label: "x: run file", action: "run-file"},
-		{label: "?: help", action: "help"},
 		{label: "Esc: menu", action: "menu"},
 		{label: "q: quit", action: "quit"},
 	}
@@ -983,7 +929,7 @@ func (m *Model) queueDetailsLoad(option InterpreterOption) tea.Cmd {
 		Kind: option.Kind,
 	}
 
-	return func() tea.Msg {
+	loadCmd := func() tea.Msg {
 		details := option.Details()
 		return detailsLoadedMsg{
 			path:    option.Path,
@@ -991,6 +937,8 @@ func (m *Model) queueDetailsLoad(option InterpreterOption) tea.Cmd {
 			err:     nil,
 		}
 	}
+
+	return tea.Batch(loadCmd, m.addSpinner.Tick)
 }
 
 // SetSize sets the terminal dimensions on the model.

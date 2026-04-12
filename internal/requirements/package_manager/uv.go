@@ -155,8 +155,26 @@ func (m *UVManager) Remove(ctx context.Context, pkgName string) error {
 		return errors.New("package name cannot be empty")
 	}
 
+	deps, _ := collectTransitiveDependencies(ctx, pkgName, m.runPip)
+
 	_, err := m.runPip(ctx, "uninstall", pkgName)
-	return err
+	if err != nil {
+		return err
+	}
+
+	orphans, err := removableOrphanDependencies(ctx, deps, m.runPip)
+	if err != nil {
+		return nil
+	}
+	if len(orphans) > 0 {
+		args := append([]string{"uninstall"}, orphans...)
+		if _, err := m.runPip(ctx, args...); err != nil {
+			return err
+		}
+	}
+
+	_ = TouchCurrentEnvironment(m.PythonPath, "")
+	return nil
 }
 
 func (m *UVManager) Versions(ctx context.Context, pkgName string) ([]string, error) {

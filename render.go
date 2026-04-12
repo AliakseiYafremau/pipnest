@@ -247,20 +247,18 @@ func renderMainMenu(m model) string {
 
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(menuAccentColor))
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(menuMutedColor))
-	legendLeft := lipgloss.JoinHorizontal(lipgloss.Top,
-		keyStyle.Render("Enter"), sepStyle.Render(": select"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("P/I/C"), sepStyle.Render(": quick open"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("click"), sepStyle.Render(": select"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("q"), sepStyle.Render(": quit"),
-	)
-	legendRight := lipgloss.NewStyle().Foreground(lipgloss.Color(menuMutedColor)).Render("main menu")
-	legendSpacer := lipgloss.NewStyle().Width(max(0, width-lipgloss.Width(legendLeft)-lipgloss.Width(legendRight))).Render("")
-	legend := lipgloss.JoinHorizontal(lipgloss.Top, legendLeft, legendSpacer, legendRight)
+	legendChunks := []string{
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Enter"), sepStyle.Render(": select")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("j/k + ↑/↓"), sepStyle.Render(": move")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("P/I/C"), sepStyle.Render(": quick open")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("click"), sepStyle.Render(": select")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("q"), sepStyle.Render(": quit")),
+	}
+	legendLeft := fitLegendChunksWithOverflow(legendChunks, sepStyle.Render("  |  "), max(1, width-10), func(hidden int) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("?"), sepStyle.Render(fmt.Sprintf(": +%d", hidden)))
+	})
+	legendRight := lipgloss.NewStyle().Foreground(lipgloss.Color(menuMutedColor)).Render("menu")
+	legend := composeLegendLine(width, legendLeft, legendRight)
 
 	lines = append(lines, logoStyle.Render(cheatsheet.LogoTitle))
 	lines = append(lines, sepStyle.Render("\n\n"))
@@ -372,7 +370,7 @@ func selectedSearchResult(results []searchResult, index int) *searchResult {
 	return &results[index]
 }
 
-func renderPackageDetails(result *searchResult, width int, height int, scroll int, loading bool, query string, err error) (string, int) {
+func renderPackageDetails(result *searchResult, width int, height int, scroll int, loading bool, loadingSpinner string, query string, err error) (string, int) {
 	if width < 24 {
 		width = 24
 	}
@@ -396,7 +394,7 @@ func renderPackageDetails(result *searchResult, width int, height int, scroll in
 	}
 
 	if loading && result == nil {
-		lines = append(lines, metaStyle.Render("Loading results..."))
+		lines = append(lines, metaStyle.Render(strings.TrimSpace(loadingSpinner+" Loading results...")))
 		return joinScrollableLines(lines, width, height, scroll)
 	}
 
@@ -619,6 +617,87 @@ func truncateText(text string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
+func safeMainSpinnerView(view string) string {
+	trimmed := strings.TrimSpace(stripANSIMain(view))
+	if trimmed == "" || strings.EqualFold(trimmed, "(error)") {
+		return "⠋"
+	}
+	return strings.TrimSpace(view)
+}
+
+func joinLegendChunks(chunks []string, sep string) string {
+	if len(chunks) == 0 {
+		return ""
+	}
+	return strings.Join(chunks, sep)
+}
+
+func fitLegendChunksWithOverflow(chunks []string, sep string, maxWidth int, overflowRenderer func(int) string) string {
+	if maxWidth <= 0 || len(chunks) == 0 {
+		return ""
+	}
+
+	included := make([]string, 0, len(chunks))
+	for _, chunk := range chunks {
+		candidate := joinLegendChunks(append(append([]string{}, included...), chunk), sep)
+		if lipgloss.Width(stripANSIMain(candidate)) <= maxWidth {
+			included = append(included, chunk)
+			continue
+		}
+		break
+	}
+
+	hidden := len(chunks) - len(included)
+	if hidden <= 0 {
+		return joinLegendChunks(included, sep)
+	}
+
+	for {
+		overflowChunk := overflowRenderer(hidden)
+		candidateParts := append(append([]string{}, included...), overflowChunk)
+		candidate := joinLegendChunks(candidateParts, sep)
+		if lipgloss.Width(stripANSIMain(candidate)) <= maxWidth {
+			return candidate
+		}
+		if len(included) == 0 {
+			plain := stripANSIMain(overflowChunk)
+			return truncateText(plain, maxWidth)
+		}
+		included = included[:len(included)-1]
+		hidden++
+	}
+}
+
+func composeLegendLine(width int, left string, right string) string {
+	if width <= 0 {
+		return ""
+	}
+	if strings.TrimSpace(right) == "" {
+		return truncateText(left, width)
+	}
+	leftW := lipgloss.Width(stripANSIMain(left))
+	rightW := lipgloss.Width(stripANSIMain(right))
+	if leftW+rightW <= width {
+		spacer := lipgloss.NewStyle().Width(width - leftW - rightW).Render("")
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, spacer, right)
+	}
+
+	maxLeft := width - rightW - 1
+	if maxLeft < 0 {
+		maxLeft = 0
+	}
+	if maxLeft > 0 {
+		left = truncateText(left, maxLeft)
+		leftW = lipgloss.Width(stripANSIMain(left))
+		if leftW+rightW <= width {
+			spacer := lipgloss.NewStyle().Width(width - leftW - rightW).Render("")
+			return lipgloss.JoinHorizontal(lipgloss.Top, left, spacer, right)
+		}
+	}
+
+	return truncateText(right, width)
+}
+
 func wrapText(text string, width int) string {
 	if width < 1 {
 		width = 1
@@ -707,7 +786,7 @@ func renderPackagesScreen(m model) string {
 
 	status := "Press Enter to search"
 	if m.loading {
-		status = "Searching..."
+		status = strings.TrimSpace(m.searchLoader.View() + " Searching...")
 	} else if m.query != "" {
 		status = fmt.Sprintf("Results for %q", m.query)
 	}
@@ -723,7 +802,7 @@ func renderPackagesScreen(m model) string {
 	inputBody := strings.Join([]string{m.input.View(), status}, "\n")
 	resultsBody := renderResults(m.results, leftPaneWidth-2, m.selected, m.listScroll, innerHeight)
 	selectedResult := selectedSearchResult(m.results, m.selected)
-	rightBody, maxDetailScroll := renderPackageDetails(selectedResult, rightPaneWidth-4, innerHeight, m.detailScroll, m.loading, m.query, m.err)
+	rightBody, maxDetailScroll := renderPackageDetails(selectedResult, rightPaneWidth-4, innerHeight, m.detailScroll, m.loading, m.searchLoader.View(), m.query, m.err)
 	if m.detailScroll > maxDetailScroll {
 		m.detailScroll = maxDetailScroll
 	}
@@ -735,15 +814,15 @@ func renderPackagesScreen(m model) string {
 
 	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		keyStyle.Render("←/→"), sepStyle.Render(": switch pane"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("↑/↓"), sepStyle.Render(": navigate/scroll"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("Ctrl+U/D"), sepStyle.Render(": scroll detail"),
-		sepStyle.Render("  |  "),
-		keyStyle.Render("Esc"), sepStyle.Render(": menu"),
-	)
+	footerChunks := []string{
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("←/→"), sepStyle.Render(": switch pane")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("↑/↓"), sepStyle.Render(": navigate/scroll")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Ctrl+U/D"), sepStyle.Render(": scroll detail")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Esc"), sepStyle.Render(": menu")),
+	}
+	footer := fitLegendChunksWithOverflow(footerChunks, sepStyle.Render("  |  "), m.width, func(hidden int) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("?"), sepStyle.Render(fmt.Sprintf(": +%d", hidden)))
+	})
 
 	return lipgloss.JoinVertical(lipgloss.Left, top, bottom, footer)
 }
@@ -942,15 +1021,15 @@ func renderCheatScreen(m model) string {
 
 	cheatKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 	cheatSepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	footer := lipgloss.JoinHorizontal(lipgloss.Top,
-		cheatKeyStyle.Render("Enter"), cheatSepStyle.Render(": copy"),
-		cheatSepStyle.Render("  |  "),
-		cheatKeyStyle.Render("←/→"), cheatSepStyle.Render(": switch pane"),
-		cheatSepStyle.Render("  |  "),
-		cheatKeyStyle.Render("↑/↓"), cheatSepStyle.Render(": navigate/scroll"),
-		cheatSepStyle.Render("  |  "),
-		cheatKeyStyle.Render("Esc"), cheatSepStyle.Render(": menu"),
-	)
+	cheatChunks := []string{
+		lipgloss.JoinHorizontal(lipgloss.Top, cheatKeyStyle.Render("Enter"), cheatSepStyle.Render(": copy")),
+		lipgloss.JoinHorizontal(lipgloss.Top, cheatKeyStyle.Render("←/→"), cheatSepStyle.Render(": switch pane")),
+		lipgloss.JoinHorizontal(lipgloss.Top, cheatKeyStyle.Render("↑/↓"), cheatSepStyle.Render(": navigate/scroll")),
+		lipgloss.JoinHorizontal(lipgloss.Top, cheatKeyStyle.Render("Esc"), cheatSepStyle.Render(": menu")),
+	}
+	footer := fitLegendChunksWithOverflow(cheatChunks, cheatSepStyle.Render("  |  "), m.width, func(hidden int) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top, cheatKeyStyle.Render("?"), cheatSepStyle.Render(fmt.Sprintf(": +%d", hidden)))
+	})
 
 	return lipgloss.JoinVertical(lipgloss.Left, searchBox, middleRow, footer)
 }
@@ -962,7 +1041,14 @@ func renderEasterEgg(m model) string {
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("33"))
 	artStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Width(m.width - 4).Align(lipgloss.Center)
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("ESC to return to menu")
+	easterKey := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
+	easterSep := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	easterChunks := []string{
+		lipgloss.JoinHorizontal(lipgloss.Top, easterKey.Render("Esc"), easterSep.Render(": menu")),
+	}
+	footer := fitLegendChunksWithOverflow(easterChunks, easterSep.Render("  |  "), m.width, func(hidden int) string {
+		return lipgloss.JoinHorizontal(lipgloss.Top, easterKey.Render("?"), easterSep.Render(fmt.Sprintf(": +%d", hidden)))
+	})
 
 	body := strings.TrimSpace(cheatsheet.Macarrones)
 	artBox := artStyle.Render(body)

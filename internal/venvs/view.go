@@ -109,4 +109,3 @@ func truncateLine(value string, maxWidth int) string {
 	right := remaining - left
 	return string(runes[:left]) + ellipsis + string(runes[len(runes)-right:])
 }
-

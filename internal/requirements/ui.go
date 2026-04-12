@@ -90,7 +90,7 @@ func RenderPackageDetails(result *Result, width int, loading bool, query string,
 	}
 
 	if loading && result == nil {
-		lines = append(lines, metaStyle.Render("Loading results..."))
+		lines = append(lines, metaStyle.Render("⠋ Loading results..."))
 		return strings.Join(lines, "\n")
 	}
 
