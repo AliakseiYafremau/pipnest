@@ -36,3 +36,7 @@ pipnest
 
 # Requirements
 requirements.txt
+
+# Venv
+.venv
+venv
