@@ -50,7 +50,7 @@ func (m *Model) View() string {
 	row := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
 	ui := lipgloss.Place(m.view.Width, bodyHeight, lipgloss.Center, lipgloss.Top, row)
 
-	if m.addModalOpen {
+	if m.addModalOpen || m.addCreating {
 		ui = m.renderAddInterpreterModal()
 	} else if m.replModalOpen {
 		ui = m.renderREPLModal()
@@ -188,7 +188,7 @@ func (m *Model) renderDetailsAndPackagesPanel(width, height int) string {
 	// Show loading state if details are being fetched
 	if m.loadingPath == path && len(details.Packages) == 0 && details.Version == "" {
 		if len(lines) < innerHeight {
-			lines = append(lines, kindStyle.Render(strings.TrimSpace(m.addSpinner.View()+" Loading...")))
+			lines = append(lines, kindStyle.Render(strings.TrimSpace(safeVenvSpinnerView(m.addSpinner.View())+" Loading...")))
 		}
 	} else if len(details.Packages) == 0 {
 		if len(lines) < innerHeight {
@@ -272,6 +272,7 @@ func (m *Model) renderLegend() string {
 		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("x"), sepStyle.Render(": run file")),
 		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("Esc"), sepStyle.Render(": menu")),
 		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("q"), sepStyle.Render(": quit")),
+		lipgloss.JoinHorizontal(lipgloss.Top, keyStyle.Render("?"), sepStyle.Render(": help")),
 	}
 	rightLegend := lipgloss.JoinHorizontal(lipgloss.Top,
 		lipgloss.NewStyle().Foreground(accentForKind(InterpreterGlobal)).Render("global"),
@@ -358,7 +359,7 @@ func (m *Model) renderAddInterpreterModal() string {
 
 	var lines []string
 	if m.addCreating {
-		spinnerStr := m.addSpinner.View()
+		spinnerStr := safeVenvSpinnerView(m.addSpinner.View())
 		lines = []string{
 			titleStyle.Render("Add Interpreter"),
 			"",
@@ -379,7 +380,7 @@ func (m *Model) renderAddInterpreterModal() string {
 			}
 			formView = lipgloss.JoinHorizontal(
 				lipgloss.Center,
-				m.addSpinner.View(),
+				safeVenvSpinnerView(m.addSpinner.View()),
 				" ",
 				"Working on your interpreter setup",
 			)
@@ -505,6 +506,14 @@ func normalizeVenvViewportLines(lines []string, width int, rows int) []string {
 		out = out[:rows]
 	}
 	return out
+}
+
+func safeVenvSpinnerView(view string) string {
+	trimmed := strings.TrimSpace(venvAnsiStripRe.ReplaceAllString(view, ""))
+	if trimmed == "" || strings.EqualFold(trimmed, "(error)") {
+		return "⠋"
+	}
+	return strings.TrimSpace(view)
 }
 
 func clampVenvLineToWidth(line string, width int) string {

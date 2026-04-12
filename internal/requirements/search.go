@@ -50,7 +50,6 @@ var (
 	packageIndex       []packageNameEntry
 	packageIndexErr    error
 	packageLinkPattern = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>([^<]+)</a>`)
-	indexCache         *IndexCache
 )
 
 func Search(query string) tea.Cmd {
@@ -111,8 +110,7 @@ func fetchResults(query string) ([]Result, error) {
 
 func loadPackageIndex() ([]packageNameEntry, error) {
 	packageIndexOnce.Do(func() {
-		indexCache = NewIndexCache()
-		packageIndex, packageIndexErr = indexCache.LoadOrFetch()
+		packageIndex, packageIndexErr = fetchPackageIndex()
 	})
 	return packageIndex, packageIndexErr
 }

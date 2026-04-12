@@ -220,7 +220,10 @@ func NewViewModel() ViewModel {
 	listSearchInput := textinput.New()
 	listSearchInput.Placeholder = "Filter installed packages..."
 	loader := spinner.New()
-	loader.Spinner = spinner.Dot
+	loader.Spinner = spinner.Spinner{
+		Frames: []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"},
+		FPS:    time.Second / 10,
+	}
 	loader.Style = lipgloss.NewStyle().Foreground(reqVenvColor)
 
 	pm := packagemanager.PackageManager(packagemanager.NewPipManager("pip"))
@@ -236,6 +239,7 @@ func NewViewModel() ViewModel {
 		ListSearchInput: listSearchInput,
 		LogText:         logText,
 		LogKind:         logLoading,
+		Loader:          loader,
 		metaCache:       map[string]Result{},
 	}
 }
@@ -247,10 +251,6 @@ func (m ViewModel) Init() tea.Cmd {
 func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
-		if !m.isLoaderActive() {
-			return m, nil
-		}
-
 		var cmd tea.Cmd
 		m.Loader, cmd = m.Loader.Update(msg)
 		return m, cmd
@@ -346,6 +346,9 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 		return m, tea.Batch(m.loadInstalledCmd(), m.freezeCmd(freezePath, false), m.Loader.Tick)
 	case searchSuggestionsDoneMsg:
 		if strings.TrimSpace(msg.Query) != strings.TrimSpace(m.ModalLastQuery) {
+			if m.isLoaderActive() {
+				return m, m.Loader.Tick
+			}
 			return m, nil
 		}
 
@@ -446,6 +449,9 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	case packageMetaLoadedMsg:
 		selectedName := m.selectedPackageName()
 		if msg.Name == "" || selectedName == "" || !strings.EqualFold(strings.TrimSpace(selectedName), strings.TrimSpace(msg.Name)) {
+			if m.isLoaderActive() {
+				return m, m.Loader.Tick
+			}
 			return m, nil
 		}
 
@@ -464,6 +470,9 @@ func (m ViewModel) Update(msg tea.Msg) (ViewModel, tea.Cmd) {
 	case installPackageMetaLoadedMsg:
 		selectedName := m.installSelectedPackageName()
 		if msg.Name == "" || selectedName == "" || !strings.EqualFold(strings.TrimSpace(selectedName), strings.TrimSpace(msg.Name)) {
+			if m.isLoaderActive() {
+				return m, m.Loader.Tick
+			}
 			return m, nil
 		}
 
@@ -689,10 +698,6 @@ func (m ViewModel) updateMainWindow(msg tea.KeyMsg) (ViewModel, tea.Cmd) {
 			if m.DetailsScroll < 0 {
 				m.DetailsScroll = 0
 			}
-			return m, nil
-		case '/':
-			m.SearchMode = true
-			m.SearchQuery = ""
 			return m, nil
 		case 'i', 'I':
 			m.openModal()
@@ -2169,23 +2174,8 @@ func (m ViewModel) renderInstalledPackages(width int, rows int) string {
 		nameWidth = 8
 	}
 
-	// Search bar (shown when search mode is active or query is set)
-	var searchBar string
-	if m.SearchMode || m.SearchQuery != "" {
-		cursor := ""
-		if m.SearchMode {
-			cursor = "█"
-		}
-		prefix := lipgloss.NewStyle().Foreground(reqKeyColor).Bold(true).Render("/")
-		query := lipgloss.NewStyle().Foreground(reqValueColor).Render(m.SearchQuery + cursor)
-		searchBar = TruncateText(prefix+query, width-2)
-	}
 
 	dimStyle := lipgloss.NewStyle().Foreground(reqMutedColor)
-	lines := []string{header, ""}
-	if searchBar != "" {
-		lines = append(lines, searchBar)
-	}
 	lines := []string{header, filterLine, ""}
 	pkgLines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
