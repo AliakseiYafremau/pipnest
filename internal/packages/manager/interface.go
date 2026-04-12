@@ -1,4 +1,4 @@
-package requirements
+package manager
 
 import "context"
 

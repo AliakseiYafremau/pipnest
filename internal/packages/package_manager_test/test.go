@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	req "pipnest/internal/requirements/package_manager"
+	req "pipnest/internal/packages/manager"
 )
 
 func main() {

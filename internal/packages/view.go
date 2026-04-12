@@ -1,4 +1,4 @@
-package requirements
+package packages
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	packagemanager "pipnest/internal/requirements/package_manager"
+	packagemanager "pipnest/internal/packages/manager"
 	"regexp"
 	"strings"
 	"time"

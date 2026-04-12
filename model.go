@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"pipnest/internal/requirements"
+	requirements "pipnest/internal/packages"
 	"strings"
 
 	"pipnest/internal/cheatsheet"
-	pm "pipnest/internal/requirements/package_manager"
+	pm "pipnest/internal/packages/manager"
 	"pipnest/internal/venvs"
 
 	"github.com/atotto/clipboard"

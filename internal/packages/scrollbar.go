@@ -1,4 +1,4 @@
-package requirements
+package packages
 
 import (
 	"strings"
