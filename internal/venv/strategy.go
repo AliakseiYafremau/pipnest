@@ -3,6 +3,7 @@ package venv
 import (
 	"context"
 	"os/exec"
+	"strings"
 )
 
 type VenvCreationStrategy interface {
@@ -12,13 +13,23 @@ type VenvCreationStrategy interface {
 type UvVenvCreationStrategy struct{}
 
 func (s *UvVenvCreationStrategy) handle(ctx context.Context, path string, pythonPath string) error {
-	cmd := exec.CommandContext(ctx, "uv", "venv", path, "--python", pythonPath)
+	args := []string{"venv", path}
+	if strings.TrimSpace(pythonPath) != "" {
+		args = append(args, "--python", pythonPath)
+	}
+
+	cmd := exec.CommandContext(ctx, "uv", args...)
 	return cmd.Run()
 }
 
 type PipVenvCreationStrategy struct{}
 
 func (s *PipVenvCreationStrategy) handle(ctx context.Context, path string, pythonPath string) error {
-	cmd := exec.CommandContext(ctx, "python", "-m", "venv", path)
+	pythonBin := "python"
+	if strings.TrimSpace(pythonPath) != "" {
+		pythonBin = pythonPath
+	}
+
+	cmd := exec.CommandContext(ctx, pythonBin, "-m", "venv", path)
 	return cmd.Run()
 }
