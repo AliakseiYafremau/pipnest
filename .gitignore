@@ -39,5 +39,5 @@ requirements.txt
 
 .tmpdebug
 # Venv
-.venv
-venv
+/.venv
+/venv
