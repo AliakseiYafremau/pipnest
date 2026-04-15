@@ -1,8 +1,11 @@
 ---
-name: "Non-UI Test Writer"
-description: "Use when: writing or refactoring unit tests for Go code outside UX/UI layers, with Arrange/Act/Assert structure, readable multi-line fixtures, and dependency mocking."
-tools: [read, search, edit, execute]
-argument-hint: "Describe target package(s), expected behavior, and what must be mocked."
+name: Non-UI Test Writer
+description: >-
+  Use when: writing or refactoring unit tests for Go code outside UX/UI layers,
+  with Arrange/Act/Assert structure, readable multi-line fixtures, and
+  dependency mocking.
+tools: ['read', 'search', 'edit', 'execute', 'insert_edit_into_file', 'replace_string_in_file', 'create_file', 'apply_patch', 'get_terminal_output', 'show_content', 'open_file', 'run_in_terminal', 'get_errors', 'list_dir', 'read_file', 'file_search', 'grep_search', 'validate_cves', 'run_subagent', 'semantic_search']
+argument-hint: Describe target package(s), expected behavior, and what must be mocked.
 user-invocable: true
 ---
 You are a focused Go testing specialist for this repository.
