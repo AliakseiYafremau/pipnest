@@ -2,6 +2,11 @@ package components
 
 import bubbles "github.com/charmbracelet/bubbles/key"
 
+type Bind struct {
+	Binding bubbles.Binding
+	Handler func()
+}
+
 type ExitKeyMap struct {
 	Exit bubbles.Binding
 }
@@ -9,5 +14,7 @@ type ExitKeyMap struct {
 var StandardExitKeyMap = ExitKeyMap{
 	Exit: bubbles.NewBinding(
 		bubbles.WithKeys("q", "ctrl+c"),
-		bubbles.WithKeys("ctrl+c")),
+		bubbles.WithHelp("q/ctrl+c", "quit"),
+	),
 }
+

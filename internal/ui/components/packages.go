@@ -3,15 +3,26 @@ package components
 import (
 	"strings"
 
-	lipgloss "github.com/charmbracelet/lipgloss"
+	bubblesKeys "github.com/charmbracelet/bubbles/key"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-type PackagesKeyMap struct{}
+func returnPackageKeyMap() []Bind {
+	return []Bind{
+		Bind{
+			Binding: bubblesKeys.NewBinding(
+				bubblesKeys.WithKeys("q", "ctrl+c"),
+				bubblesKeys.WithKeys("q or ctrl+c to escape"),
+			),
+			Handler: func() {
+				tea.Quit()
+			},
+		},
+	}
+}
 
-// RenderPackagePanel returns a simple package panel rendering. It is a
-// small, self-contained helper so other UI files can use it without
-// introducing compile-time dependencies on runtime layout variables.
-func RenderPackagePanel(w, h int, pkgs []string) string {
+func RenderPackagePanel(w, h int, pkgs []string) (string, []Bind) {
 	packagesStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1).Width(w - 4).Height(h - 3)
 
 	var lines []string
@@ -20,5 +31,7 @@ func RenderPackagePanel(w, h int, pkgs []string) string {
 	}
 	packagesList := packagesStyle.Render(strings.Join(lines, "\n"))
 
-	return packagesList
+	// Return rendering and an optional key binding -> handler map for future interactivity.
+	// For now, we don't bind any handlers, so return nil.
+	return packagesList, returnPackageKeyMap()
 }
