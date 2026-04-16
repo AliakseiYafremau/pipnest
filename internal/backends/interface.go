@@ -21,6 +21,7 @@ type PackageDetails struct {
 
 // Backend defines base package-manager operations shared by pip/uv backends.
 type Backend interface {
+	SetPythonPath(string)
 	InstallPackage(ctx context.Context, packageName string) error
 	UninstallPackage(ctx context.Context, packageName string) error
 	ShowPackage(ctx context.Context, packageName string) (PackageDetails, error)

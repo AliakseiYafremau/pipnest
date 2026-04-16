@@ -32,6 +32,9 @@ type Service struct {
 // NewService New detects installed backends (uv/pip), builds the backend list and picks active backend by policy uv -> pip.
 // Returns ErrNoBackends when neither uv nor pip is installed.
 func NewService(pythonPath string) (*Service, error) {
+	if pythonPath == "" {
+		pythonPath = "python"
+	}
 	backendsByName := detectInstalledBackends(pythonPath)
 	return newFromBackends(backendsByName)
 }
@@ -102,6 +105,15 @@ func (s *Service) GetAvailableBackends() (map[string]backends.Backend, error) {
 	}
 
 	return returnedBackends, nil
+}
+
+func (s *Service) ChangePythonPath(pythonPath string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for backendKey := range s.backends {
+		s.backends[backendKey].SetPythonPath(pythonPath)
+	}
 }
 
 func validatePackageName(name string) (string, error) {

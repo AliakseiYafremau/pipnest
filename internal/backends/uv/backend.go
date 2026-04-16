@@ -13,6 +13,10 @@ type Backend struct {
 	PythonPath string
 }
 
+func (b *Backend) SetPythonPath(newPath string) {
+	b.PythonPath = newPath
+}
+
 // NewUvBackend creates a uv backend with optional binary and interpreter path.
 func NewUvBackend(binary, pythonPath string) *Backend {
 	if strings.TrimSpace(binary) == "" {

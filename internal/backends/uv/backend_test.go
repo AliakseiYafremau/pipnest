@@ -88,3 +88,39 @@ func TestRunUvPip_PropagatesRunnerError(t *testing.T) {
 		t.Fatalf("expected propagated error %v, got %v", wantErr, err)
 	}
 }
+
+func TestSetPythonPath_ReflectsInRunUvPip(t *testing.T) {
+	// Arrange
+	backend := &Backend{Binary: "uv"}
+
+	originalRunner := backends.DefaultRunner
+	t.Cleanup(func() { backends.DefaultRunner = originalRunner })
+
+	var gotBinary string
+	var gotArgs []string
+	backends.DefaultRunner = func(_ context.Context, binary string, args ...string) (string, error) {
+		gotBinary = binary
+		gotArgs = append([]string{}, args...)
+		return "ok", nil
+	}
+
+	// Act
+	backend.SetPythonPath("/venv/bin/python")
+	out, err := backend.runUvPip(context.Background(), "show", "requests")
+
+	// Assert
+	if err != nil {
+		t.Fatalf("runUvPip returned error: %v", err)
+	}
+	if out != "ok" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+	if gotBinary != "uv" {
+		t.Fatalf("unexpected binary: %q", gotBinary)
+	}
+	wantArgs := []string{"pip", "--python", "/venv/bin/python", "show", "requests"}
+	if !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("unexpected args\nwant: %#v\ngot:  %#v", wantArgs, gotArgs)
+	}
+}
+

@@ -25,6 +25,11 @@ type fakeBackend struct {
 	listErr      error
 }
 
+func (f *fakeBackend) SetPythonPath(string) {
+	//TODO implement me
+	panic("implement me")
+}
+
 func (f *fakeBackend) InstallPackage(_ context.Context, packageName string) error {
 	f.installCalls = append(f.installCalls, packageName)
 	return f.installErr

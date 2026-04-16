@@ -13,6 +13,10 @@ type Backend struct {
 	PythonPath string
 }
 
+func (b *Backend) SetPythonPath(newPath string) {
+	b.PythonPath = newPath
+}
+
 // NewPipBackend creates a pip backend with optional binary and interpreter path.
 func NewPipBackend(binary, pythonPath string) *Backend {
 	if strings.TrimSpace(binary) == "" {
@@ -63,9 +67,13 @@ func (b *Backend) ListPackages(ctx context.Context) ([]backends.Package, error) 
 // 3) Use Backend.Binary as the command executable (usually "pip").
 //
 // Example:
-//   runPip(ctx, "install", "requests")
+//
+//	runPip(ctx, "install", "requests")
+//
 // becomes:
-//   pip --python /path/to/python install requests
+//
+//	pip --python /path/to/python install requests
+//
 // when PythonPath is configured.
 func (b *Backend) runPip(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := make([]string, 0, len(args)+2)

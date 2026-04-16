@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -12,10 +11,7 @@ import (
 )
 
 func main() {
-	pythonPath := flag.String("python", "python", "path to python executable (used to detect backends)")
-	flag.Parse()
-
-	svc, err := service.NewService(*pythonPath)
+	svc, err := service.NewService("")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to initialize service:", err)
 		os.Exit(1)
