@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Rotlerxd/pipnest/internal/ui/components"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Rotlerxd/pipnest/internal/service"
@@ -11,13 +12,13 @@ import (
 )
 
 func main() {
-	svc, err := service.NewService("")
+	appService, err := service.NewService("")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to initialize service:", err)
 		os.Exit(1)
 	}
 
-	m := ui.NewAppModel(svc)
+	m := ui.NewAppModel(components.StandardExitKeyMap, appService)
 
 	p := tea.NewProgram(m)
 	if err := p.Start(); err != nil {

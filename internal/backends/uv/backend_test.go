@@ -123,4 +123,3 @@ func TestSetPythonPath_ReflectsInRunUvPip(t *testing.T) {
 		t.Fatalf("unexpected args\nwant: %#v\ngot:  %#v", wantArgs, gotArgs)
 	}
 }
-
