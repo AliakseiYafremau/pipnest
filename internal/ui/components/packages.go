@@ -3,20 +3,19 @@ package components
 import (
 	"strings"
 
-	bubblesKeys "github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	bubbles "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
 )
 
 func returnPackageKeyMap() []Bind {
 	return []Bind{
-		Bind{
-			Binding: bubblesKeys.NewBinding(
-				bubblesKeys.WithKeys("q", "ctrl+c"),
-				bubblesKeys.WithKeys("q or ctrl+c to escape"),
+		{
+			Binding: bubbles.NewBinding(
+				bubbles.WithKeys("q", "ctrl+c"),
+				bubbles.WithHelp("q/ctrl+c", "quit"),
 			),
 			Handler: func() {
-				tea.Quit()
+				// no-op for now; Update() will handle quitting via exitKeyMap.
 			},
 		},
 	}
@@ -31,7 +30,5 @@ func RenderPackagePanel(w, h int, pkgs []string) (string, []Bind) {
 	}
 	packagesList := packagesStyle.Render(strings.Join(lines, "\n"))
 
-	// Return rendering and an optional key binding -> handler map for future interactivity.
-	// For now, we don't bind any handlers, so return nil.
 	return packagesList, returnPackageKeyMap()
 }
