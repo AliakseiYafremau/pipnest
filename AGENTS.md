@@ -81,6 +81,17 @@ Good:
 - TUI triggers `package_service.install(...)`
 - service delegates to selected backend
 
+## Service layer API policy
+
+The `internal/service` package is the application orchestration layer and must remain a stable, backend-agnostic surface for the rest of the codebase.
+
+- Do NOT change `internal/service` to add shortcuts or API surface that exists solely for UI convenience.
+- UI-specific APIs, adapters, view models and presentation logic must live in the `ui` layer. If the UI needs a different shape of data, implement an adapter in `internal/ui` (or in the `ui` package) rather than mutating service contracts.
+- Service may expose backend-agnostic use-cases (install, uninstall, list, show, freeze). Any UI-driven helpers should be implemented on top of these use-cases in the `ui` layer.
+
+If you feel service must change for a valid cross-cutting reason, first discuss the change in design or a pull request description and prefer additive, backward-compatible changes.
+
+
 ## Backend Model
 
 Each backend should implement a common interface for operations such as:
