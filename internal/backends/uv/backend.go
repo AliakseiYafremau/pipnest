@@ -63,25 +63,14 @@ func (b *Backend) ListPackages(ctx context.Context) ([]backends.Package, error) 
 //
 // Command composition order:
 // 1) Start with "pip" subcommand namespace.
-// 2) If PythonPath is set, append "--python <PythonPath>" after "pip".
-// 3) Append operation args received by this method.
+// 2) Append operation args received by this method.
 //
-// Example:
-//
-//	runUvPip(ctx, "install", "requests")
-//
-// becomes:
-//
-//	uv pip --python /path/to/python install requests
-//
-// when PythonPath is configured.
+// Note: uv's pip command does not accept the same --python flag that
+// standalone pip accepts. We must not inject "--python" here to avoid
+// argument errors when invoking uv.
 func (b *Backend) runUvPip(ctx context.Context, args ...string) (string, error) {
-	cmdArgs := make([]string, 0, len(args)+3)
+	cmdArgs := make([]string, 0, len(args)+1)
 	cmdArgs = append(cmdArgs, "pip")
-
-	if strings.TrimSpace(b.PythonPath) != "" {
-		cmdArgs = append(cmdArgs, "--python", strings.TrimSpace(b.PythonPath))
-	}
 
 	cmdArgs = append(cmdArgs, args...)
 
