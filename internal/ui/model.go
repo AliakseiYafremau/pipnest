@@ -196,7 +196,13 @@ func (m *AppModel) View() string {
 	layout := lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, strings.Repeat(" ", gap), rightColumn)
 
 	statusLine := lipgloss.NewStyle().Foreground(components.UI.MutedTextColor).Render(m.status)
-	return lipgloss.JoinVertical(lipgloss.Left, layout, statusLine)
+	fullView := lipgloss.JoinVertical(lipgloss.Left, layout, statusLine)
+
+	// Force full-screen paint to match current terminal size.
+	return lipgloss.NewStyle().
+		Width(m.width).
+		Height(m.height).
+		Render(fullView)
 }
 
 func loadPackagesCmd(s appService) tea.Cmd {
