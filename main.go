@@ -20,7 +20,7 @@ func main() {
 
 	m := ui.NewAppModel(components.StandardExitKeyMap, appService)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if err := p.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "failed to start TUI:", err)
 		os.Exit(2)

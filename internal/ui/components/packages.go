@@ -83,3 +83,59 @@ func RenderVenvList(venvs []venv.Venv, maxLines int) string {
 
 	return strings.Join(lines, "\n")
 }
+
+func RenderPackageDetails(selectedName string, details backends.PackageDetails, isLoading bool, loadErr string) string {
+	muted := lipgloss.NewStyle().Foreground(UI.MutedTextColor)
+
+	if strings.TrimSpace(selectedName) == "" {
+		return muted.Render("Select a package to see details")
+	}
+
+	if isLoading {
+		return muted.Render("Loading package details...")
+	}
+
+	if strings.TrimSpace(loadErr) != "" {
+		return muted.Render("Error loading details: " + loadErr)
+	}
+
+	name := strings.TrimSpace(details.Name)
+	if name == "" {
+		name = selectedName
+	}
+
+	version := strings.TrimSpace(details.Version)
+	if version == "" {
+		version = "-"
+	}
+
+	summary := strings.TrimSpace(details.Summary)
+	if summary == "" {
+		summary = "-"
+	}
+
+	homePage := strings.TrimSpace(details.HomePage)
+	if homePage == "" {
+		homePage = "-"
+	}
+
+	author := strings.TrimSpace(details.Author)
+	if author == "" {
+		author = "-"
+	}
+
+	license := strings.TrimSpace(details.License)
+	if license == "" {
+		license = "-"
+	}
+
+	return strings.Join([]string{
+		"Name: " + name,
+		"Version: " + version,
+		"Summary: " + summary,
+		"Home page: " + homePage,
+		"Author: " + author,
+		"License: " + license,
+	}, "\n")
+}
+

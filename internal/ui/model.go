@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/Rotlerxd/pipnest/internal/backends"
-	"github.com/Rotlerxd/pipnest/internal/service"
 	"github.com/Rotlerxd/pipnest/internal/ui/components"
 	"github.com/Rotlerxd/pipnest/internal/venv"
 	"github.com/charmbracelet/bubbles/key"
@@ -24,9 +23,16 @@ type venvListLoadedMsg struct {
 	err   error
 }
 
+type packageDetailsLoadedMsg struct {
+	name    string
+	details backends.PackageDetails
+	err     error
+}
+
 type appService interface {
 	ListPackages(ctx context.Context) ([]backends.Package, error)
 	ListVenv(ctx context.Context) ([]venv.Venv, error)
+	ShowPackage(ctx context.Context, packageName string) (backends.PackageDetails, error)
 }
 
 type AppModel struct {
@@ -44,9 +50,13 @@ type AppModel struct {
 
 	venvs  []venv.Venv
 	status string
+
+	packageDetails backends.PackageDetails
+	detailsLoading bool
+	detailsError   string
 }
 
-func NewAppModel(exitKeyMap components.ExitKeyMap, service *service.Service) *AppModel {
+func NewAppModel(exitKeyMap components.ExitKeyMap, service appService) *AppModel {
 	return &AppModel{
 		exitKeyMap:  exitKeyMap,
 		service:     service,
@@ -68,12 +78,15 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case packageListLoadedMsg:
 		if msg.err != nil {
 			m.status = "packages: " + msg.err.Error()
+			m.packageDetails = backends.PackageDetails{}
+			m.detailsLoading = false
+			m.detailsError = ""
 			return m, nil
 		}
 		m.packages = msg.packages
 		m.applyPackageFilter()
 		m.status = fmt.Sprintf("packages: %d", len(m.packages))
-		return m, nil
+		return m, m.loadSelectedPackageDetailsCmd()
 	case venvListLoadedMsg:
 		if msg.err != nil {
 			m.status = "venv: " + msg.err.Error()
@@ -82,10 +95,27 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.venvs = msg.venvs
 		m.status = fmt.Sprintf("packages: %d, venv: %d", len(m.packages), len(m.venvs))
 		return m, nil
+	case packageDetailsLoadedMsg:
+		if msg.name != m.selectedPackageName() {
+			return m, nil
+		}
+
+		m.detailsLoading = false
+		if msg.err != nil {
+			m.packageDetails = backends.PackageDetails{}
+			m.detailsError = msg.err.Error()
+			return m, nil
+		}
+
+		m.packageDetails = msg.details
+		m.detailsError = ""
+		return m, nil
 	case tea.KeyMsg:
 		if key.Matches(msg, m.exitKeyMap.Exit) {
 			return m, tea.Quit
 		}
+
+		prevSelected := m.selectedPackageName()
 
 		switch msg.String() {
 		case "backspace":
@@ -93,26 +123,28 @@ func (m *AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
 				m.applyPackageFilter()
 			}
-			return m, nil
+			return m, m.maybeReloadPackageDetailsCmd(prevSelected)
 		case "ctrl+r":
 			m.status = "refreshing..."
+			m.detailsLoading = false
+			m.detailsError = ""
 			return m, tea.Batch(loadPackagesCmd(m.service), loadVenvsCmd(m.service))
 		case "up":
 			if m.selected > 0 {
 				m.selected--
 			}
-			return m, nil
+			return m, m.maybeReloadPackageDetailsCmd(prevSelected)
 		case "down":
 			if m.selected < len(m.filtered)-1 {
 				m.selected++
 			}
-			return m, nil
+			return m, m.maybeReloadPackageDetailsCmd(prevSelected)
 		}
 
 		if len(msg.Runes) > 0 && msg.Alt == false && msg.Type == tea.KeyRunes {
 			m.searchQuery += string(msg.Runes)
 			m.applyPackageFilter()
-			return m, nil
+			return m, m.maybeReloadPackageDetailsCmd(prevSelected)
 		}
 	}
 
@@ -124,51 +156,34 @@ func (m *AppModel) View() string {
 		return "loading..."
 	}
 
-	frameWidth := m.width
-	frameHeight := m.height
-	contentWidth := frameWidth - 2
-	contentHeight := frameHeight - 2
-	if contentWidth < 20 || contentHeight < 10 {
-		return "Terminal too small"
-	}
-
 	gap := components.UI.Gap
-	leftWidth := (contentWidth - gap) / 2
-	rightWidth := contentWidth - leftWidth - gap
+	leftWidth := (m.width - gap) / 2
+	rightWidth := m.width - leftWidth - gap
 
-	layoutHeight := contentHeight - 1
-	if layoutHeight < 3 {
-		layoutHeight = 3
+	contentHeight := m.height - 1
+	if contentHeight < 10 {
+		contentHeight = m.height
 	}
-
-	verticalAvailable := layoutHeight - gap
-	if verticalAvailable < 2 {
-		verticalAvailable = 2
+	leftTopHeight := int(float64(contentHeight) * components.UI.LeftTopRatio)
+	if leftTopHeight < 8 {
+		leftTopHeight = 8
 	}
-	leftTopHeight := int(float64(verticalAvailable) * components.UI.LeftTopRatio)
-	if leftTopHeight < 1 {
-		leftTopHeight = 1
+	leftBottomHeight := contentHeight - leftTopHeight - gap
+	if leftBottomHeight < 4 {
+		leftBottomHeight = 4
 	}
-	if leftTopHeight > verticalAvailable-1 {
-		leftTopHeight = verticalAvailable - 1
-	}
-	leftBottomHeight := verticalAvailable - leftTopHeight
-
 	rightBottomHeight := components.UI.RightBottomHeight
-	if rightBottomHeight < 1 {
-		rightBottomHeight = 1
+	if rightBottomHeight > contentHeight-4 {
+		rightBottomHeight = 4
 	}
-	if rightBottomHeight > verticalAvailable-1 {
-		rightBottomHeight = verticalAvailable - 1
-	}
-	rightTopHeight := verticalAvailable - rightBottomHeight
+	rightTopHeight := contentHeight - rightBottomHeight - gap
 
 	searchView := components.RenderSearchBox(m.searchQuery, leftWidth-6)
 	leftTopBody := searchView + "\n\n" +
 		components.RenderPackagesList(m.filtered, m.selected, leftTopHeight-5)
 	leftBottomBody := components.RenderVenvList(m.venvs, leftBottomHeight-2)
 
-	rightTopBody := lipgloss.NewStyle().Foreground(components.UI.MutedTextColor).Render("Description placeholder")
+	rightTopBody := components.RenderPackageDetails(m.selectedPackageName(), m.packageDetails, m.detailsLoading, m.detailsError)
 	rightBottomBody := lipgloss.NewStyle().Foreground(components.UI.MutedTextColor).Render("Console log placeholder")
 
 	leftTop := components.RenderPanel("Installed packages", leftTopBody, leftWidth, leftTopHeight)
@@ -181,8 +196,7 @@ func (m *AppModel) View() string {
 	layout := lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, strings.Repeat(" ", gap), rightColumn)
 
 	statusLine := lipgloss.NewStyle().Foreground(components.UI.MutedTextColor).Render(m.status)
-	rootContent := lipgloss.JoinVertical(lipgloss.Left, layout, statusLine)
-	return components.RenderRootFrame(rootContent, frameWidth, frameHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, layout, statusLine)
 }
 
 func loadPackagesCmd(s appService) tea.Cmd {
@@ -202,6 +216,16 @@ func loadVenvsCmd(s appService) tea.Cmd {
 		}
 		venvs, err := s.ListVenv(context.Background())
 		return venvListLoadedMsg{venvs: venvs, err: err}
+	}
+}
+
+func loadPackageDetailsCmd(s appService, packageName string) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return packageDetailsLoadedMsg{name: packageName, details: backends.PackageDetails{}, err: nil}
+		}
+		details, err := s.ShowPackage(context.Background(), packageName)
+		return packageDetailsLoadedMsg{name: packageName, details: details, err: err}
 	}
 }
 
@@ -226,3 +250,37 @@ func (m *AppModel) applyPackageFilter() {
 		m.selected = 0
 	}
 }
+
+func (m *AppModel) selectedPackageName() string {
+	if len(m.filtered) == 0 {
+		return ""
+	}
+	if m.selected < 0 || m.selected >= len(m.filtered) {
+		return ""
+	}
+
+	return strings.TrimSpace(m.filtered[m.selected].Name)
+}
+
+func (m *AppModel) loadSelectedPackageDetailsCmd() tea.Cmd {
+	selected := m.selectedPackageName()
+	if selected == "" {
+		m.packageDetails = backends.PackageDetails{}
+		m.detailsLoading = false
+		m.detailsError = ""
+		return nil
+	}
+
+	m.detailsLoading = true
+	m.detailsError = ""
+	return loadPackageDetailsCmd(m.service, selected)
+}
+
+func (m *AppModel) maybeReloadPackageDetailsCmd(previousSelection string) tea.Cmd {
+	if previousSelection == m.selectedPackageName() {
+		return nil
+	}
+
+	return m.loadSelectedPackageDetailsCmd()
+}
+
