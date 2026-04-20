@@ -1,34 +1,85 @@
 package components
 
 import (
+	"fmt"
 	"strings"
 
-	bubbles "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Rotlerxd/pipnest/internal/backends"
+	"github.com/Rotlerxd/pipnest/internal/venv"
 )
 
-func returnPackageKeyMap() []Bind {
-	return []Bind{
-		{
-			Binding: bubbles.NewBinding(
-				bubbles.WithKeys("q", "ctrl+c"),
-				bubbles.WithHelp("q/ctrl+c", "quit"),
-			),
-			Handler: func() {
-				// no-op for now; Update() will handle quitting via exitKeyMap.
-			},
-		},
+func RenderSearchBox(query string, width int) string {
+	if width < 8 {
+		width = 8
 	}
+	label := "Search"
+	value := query
+	if strings.TrimSpace(value) == "" {
+		value = lipgloss.NewStyle().Foreground(UI.MutedTextColor).Render("type to filter...")
+	}
+	line := strings.Repeat("-", width)
+	return label + "\n" + value + "\n" + line
 }
 
-func RenderPackagePanel(w, h int, pkgs []string) (string, []Bind) {
-	packagesStyle := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1).Width(w - 4).Height(h - 3)
-
-	var lines []string
-	for _, p := range pkgs {
-		lines = append(lines, "  "+p)
+func RenderPackagesList(packages []backends.Package, selected, maxLines int) string {
+	if len(packages) == 0 {
+		return lipgloss.NewStyle().Foreground(UI.MutedTextColor).Render("No installed packages")
 	}
-	packagesList := packagesStyle.Render(strings.Join(lines, "\n"))
+	if maxLines <= 0 {
+		maxLines = len(packages)
+	}
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(packages) {
+		selected = len(packages) - 1
+	}
 
-	return packagesList, returnPackageKeyMap()
+	start := 0
+	if selected >= maxLines {
+		start = selected - maxLines + 1
+	}
+	end := start + maxLines
+	if end > len(packages) {
+		end = len(packages)
+	}
+
+	lines := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		line := fmt.Sprintf("%s %s", packages[i].Name, packages[i].Version)
+		if strings.TrimSpace(packages[i].Version) == "" {
+			line = packages[i].Name
+		}
+
+		if i == selected {
+			line = lipgloss.NewStyle().Foreground(UI.SelectedColor).Render("> " + line)
+		} else {
+			line = "  " + line
+		}
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func RenderVenvList(venvs []venv.Venv, maxLines int) string {
+	if len(venvs) == 0 {
+		return lipgloss.NewStyle().Foreground(UI.MutedTextColor).Render("No .venv found")
+	}
+	if maxLines <= 0 || maxLines > len(venvs) {
+		maxLines = len(venvs)
+	}
+
+	lines := make([]string, 0, maxLines)
+	for _, v := range venvs[:maxLines] {
+		if strings.TrimSpace(v.Path) == "" {
+			lines = append(lines, "- "+v.Name)
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s)", v.Name, v.Path))
+	}
+
+	return strings.Join(lines, "\n")
 }
